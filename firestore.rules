@@ -1,23 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Global catch-all default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(data) {
+      return data != null && data.userId == request.auth.uid;
+    }
+
     match /grades/{gradeId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
+
     match /classes/{classId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
+
     match /teachers/{teacherId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
+
     match /students/{studentId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
+
     match /attendance/{attendanceId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
+
     match /behaviors/{behaviorId} {
-      allow read, write: if true;
+      allow read, delete: if isSignedIn() && isOwner(resource.data);
+      allow create: if isSignedIn() && isOwner(request.resource.data);
+      allow update: if isSignedIn() && isOwner(resource.data) && isOwner(request.resource.data);
     }
   }
 }

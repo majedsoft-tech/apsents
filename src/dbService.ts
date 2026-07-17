@@ -12,7 +12,7 @@ import {
   serverTimestamp,
   onSnapshot
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, auth } from "./firebase";
 import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord } from "./types";
 
 // Collection Names
@@ -25,32 +25,47 @@ const BEHAVIORS_COLL = "behaviors";
 
 // Fetch All Grades
 export async function getGrades(): Promise<Grade[]> {
-  const querySnapshot = await getDocs(collection(db, GRADES_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, GRADES_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
 }
 
 // Fetch All Classes
 export async function getClasses(): Promise<Class[]> {
-  const querySnapshot = await getDocs(collection(db, CLASSES_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, CLASSES_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
 }
 
 // Fetch All Teachers
 export async function getTeachers(): Promise<Teacher[]> {
-  const querySnapshot = await getDocs(collection(db, TEACHERS_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, TEACHERS_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Teacher));
 }
 
 // Fetch All Students
 export async function getStudents(): Promise<Student[]> {
-  const querySnapshot = await getDocs(collection(db, STUDENTS_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, STUDENTS_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
 }
 
 // Fetch Students by Grade and Class
 export async function getStudentsByClass(gradeId: string, classId: string): Promise<Student[]> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
   const q = query(
     collection(db, STUDENTS_COLL),
+    where("userId", "==", uid),
     where("gradeId", "==", gradeId),
     where("classId", "==", classId)
   );
@@ -65,8 +80,11 @@ export async function getAttendanceRecord(
   gradeId: string,
   classId: string
 ): Promise<AttendanceRecord | null> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
   const q = query(
     collection(db, ATTENDANCE_COLL),
+    where("userId", "==", uid),
     where("date", "==", date),
     where("period", "==", period),
     where("gradeId", "==", gradeId),
@@ -80,6 +98,9 @@ export async function getAttendanceRecord(
 
 // Save Attendance Record
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
+  
   // Check if a record already exists for this slot
   const existing = await getAttendanceRecord(record.date, record.period, record.gradeId, record.classId);
   
@@ -87,12 +108,14 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     const docRef = doc(db, ATTENDANCE_COLL, existing.id);
     await setDoc(docRef, {
       ...record,
+      userId: uid,
       timestamp: serverTimestamp()
     }, { merge: true });
   } else {
     const collRef = collection(db, ATTENDANCE_COLL);
     await addDoc(collRef, {
       ...record,
+      userId: uid,
       timestamp: serverTimestamp()
     });
   }
@@ -100,8 +123,11 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
 
 // Fetch Behavior Records for a student
 export async function getBehaviorRecords(studentId: string): Promise<BehaviorRecord[]> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
   const q = query(
     collection(db, BEHAVIORS_COLL),
+    where("userId", "==", uid),
     where("studentId", "==", studentId)
   );
   const querySnapshot = await getDocs(q);
@@ -112,9 +138,12 @@ export async function getBehaviorRecords(studentId: string): Promise<BehaviorRec
 
 // Save Behavior Record
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const collRef = collection(db, BEHAVIORS_COLL);
   const docRef = await addDoc(collRef, {
     ...record,
+    userId: uid,
     timestamp: serverTimestamp()
   });
   return docRef.id;
@@ -129,8 +158,11 @@ export async function deleteBehaviorRecord(id: string): Promise<void> {
 
 // Add Grade
 export async function addGrade(name: string): Promise<string> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const docRef = await addDoc(collection(db, GRADES_COLL), { 
     name,
+    userId: uid,
     createdAt: Date.now()
   });
   return docRef.id;
@@ -138,18 +170,20 @@ export async function addGrade(name: string): Promise<string> {
 
 // Delete Grade
 export async function deleteGrade(id: string): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   batch.delete(doc(db, GRADES_COLL, id));
   
   // Clean up associated classes
-  const classesQuery = query(collection(db, CLASSES_COLL), where("gradeId", "==", id));
+  const classesQuery = query(collection(db, CLASSES_COLL), where("userId", "==", uid), where("gradeId", "==", id));
   const classesSnap = await getDocs(classesQuery);
   classesSnap.docs.forEach(cDoc => {
     batch.delete(doc(db, CLASSES_COLL, cDoc.id));
   });
 
   // Clean up associated students
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("gradeId", "==", id));
+  const studentsQuery = query(collection(db, STUDENTS_COLL), where("userId", "==", uid), where("gradeId", "==", id));
   const studentsSnap = await getDocs(studentsQuery);
   studentsSnap.docs.forEach(sDoc => {
     batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
@@ -160,17 +194,21 @@ export async function deleteGrade(id: string): Promise<void> {
 
 // Add Class
 export async function addClass(name: string, gradeId: string): Promise<string> {
-  const docRef = await addDoc(collection(db, CLASSES_COLL), { name, gradeId });
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
+  const docRef = await addDoc(collection(db, CLASSES_COLL), { name, gradeId, userId: uid });
   return docRef.id;
 }
 
 // Delete Class
 export async function deleteClass(id: string): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   batch.delete(doc(db, CLASSES_COLL, id));
   
   // Clean up associated students of this class
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("classId", "==", id));
+  const studentsQuery = query(collection(db, STUDENTS_COLL), where("userId", "==", uid), where("classId", "==", id));
   const studentsSnap = await getDocs(studentsQuery);
   studentsSnap.docs.forEach(sDoc => {
     batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
@@ -181,16 +219,20 @@ export async function deleteClass(id: string): Promise<void> {
 
 // Add Teacher
 export async function addTeacher(name: string): Promise<string> {
-  const docRef = await addDoc(collection(db, TEACHERS_COLL), { name });
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
+  const docRef = await addDoc(collection(db, TEACHERS_COLL), { name, userId: uid });
   return docRef.id;
 }
 
 // Add Multiple Teachers in a Batch
 export async function addTeachersBatch(names: string[]): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   names.forEach(name => {
     const docRef = doc(collection(db, TEACHERS_COLL));
-    batch.set(docRef, { name });
+    batch.set(docRef, { name, userId: uid });
   });
   await batch.commit();
 }
@@ -211,16 +253,20 @@ export async function deleteTeachersBatch(ids: string[]): Promise<void> {
 
 // Add Student
 export async function addStudent(name: string, gradeId: string, classId: string): Promise<string> {
-  const docRef = await addDoc(collection(db, STUDENTS_COLL), { name, gradeId, classId });
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
+  const docRef = await addDoc(collection(db, STUDENTS_COLL), { name, gradeId, classId, userId: uid });
   return docRef.id;
 }
 
 // Add Multiple Students in a Batch
 export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   studentsList.forEach(s => {
     const docRef = doc(collection(db, STUDENTS_COLL));
-    batch.set(docRef, { name: s.name, gradeId: s.gradeId, classId: s.classId });
+    batch.set(docRef, { name: s.name, gradeId: s.gradeId, classId: s.classId, userId: uid });
   });
   await batch.commit();
 }
@@ -241,13 +287,22 @@ export async function deleteStudentsBatch(ids: string[]): Promise<void> {
 
 // Fetch all attendance for statistics
 export async function getAllAttendanceRecords(): Promise<AttendanceRecord[]> {
-  const querySnapshot = await getDocs(collection(db, ATTENDANCE_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, ATTENDANCE_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
 }
 
 // Subscribe to all attendance for real-time statistics
 export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRecord[]) => void, onError?: (error: any) => void) {
-  return onSnapshot(collection(db, ATTENDANCE_COLL), (snapshot) => {
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    callback([]);
+    return () => {};
+  }
+  const q = query(collection(db, ATTENDANCE_COLL), where("userId", "==", uid));
+  return onSnapshot(q, (snapshot) => {
     const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
     callback(records);
   }, onError);
@@ -255,145 +310,142 @@ export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRe
 
 // Fetch all behavior records for statistics
 export async function getAllBehaviorRecords(): Promise<BehaviorRecord[]> {
-  const querySnapshot = await getDocs(collection(db, BEHAVIORS_COLL));
+  const uid = auth.currentUser?.uid;
+  if (!uid) return [];
+  const q = query(collection(db, BEHAVIORS_COLL), where("userId", "==", uid));
+  const querySnapshot = await getDocs(q);
   return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BehaviorRecord));
 }
 
 // Subscribe to all behavior records for real-time statistics
 export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord[]) => void, onError?: (error: any) => void) {
-  return onSnapshot(collection(db, BEHAVIORS_COLL), (snapshot) => {
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    callback([]);
+    return () => {};
+  }
+  const q = query(collection(db, BEHAVIORS_COLL), where("userId", "==", uid));
+  return onSnapshot(q, (snapshot) => {
     const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BehaviorRecord));
     callback(records);
   }, onError);
 }
 
 // --- DATABASE AUTO-SEEDING ---
-const getTodayDateString = () => {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
 export async function seedDatabaseIfEmpty(): Promise<boolean> {
-  const gradesSnap = await getDocs(collection(db, GRADES_COLL));
-  if (!gradesSnap.empty) {
-    return false; // Database is already seeded
+  const user = auth.currentUser;
+  if (!user || !user.email) return false;
+  
+  const email = user.email.toLowerCase();
+  // Only seed if the user has "majedsoft" in their email
+  if (!email.includes("majedsoft")) {
+    return false;
   }
 
+  const uid = user.uid;
+
+  // Check if we already have grades in the database for this specific user
+  const gradesQuery = query(collection(db, GRADES_COLL), where("userId", "==", uid));
+  const gradesSnap = await getDocs(gradesQuery);
+  if (!gradesSnap.empty) {
+    // Database already has data for this user
+    return false;
+  }
+
+  // Start the batch write
   const batch = writeBatch(db);
 
   // 1. Seed Grades
-  const grades = [
-    { id: "grade-1", name: "الصف الأول" },
-    { id: "grade-2", name: "الصف الثاني" }
+  const gradesToSeed = [
+    { name: "الصف الأول الثانوي" },
+    { name: "الصف الثاني الثانوي" },
+    { name: "الصف الثالث الثانوي" }
   ];
-  for (const g of grades) {
-    batch.set(doc(db, GRADES_COLL, g.id), { name: g.name });
-  }
 
-  // 2. Seed Classes
-  const classes = [
-    { id: "class-1-1", name: "الفصل الأول", gradeId: "grade-1" },
-    { id: "class-2-2", name: "الفصل الثاني", gradeId: "grade-2" },
-    { id: "class-2-3", name: "الفصل 3", gradeId: "grade-2" },
-    { id: "class-2-5", name: "الفصل 5", gradeId: "grade-2" }
-  ];
-  for (const c of classes) {
-    batch.set(doc(db, CLASSES_COLL, c.id), { name: c.name, gradeId: c.gradeId });
-  }
+  const gradeRefs: { name: string; ref: any; id: string }[] = [];
+  gradesToSeed.forEach(g => {
+    const ref = doc(collection(db, GRADES_COLL));
+    batch.set(ref, {
+      name: g.name,
+      userId: uid,
+      createdAt: Date.now()
+    });
+    gradeRefs.push({ name: g.name, ref, id: ref.id });
+  });
+
+  // 2. Seed Classes for each Grade
+  const classRefs: { name: string; gradeId: string; ref: any; id: string }[] = [];
+  gradeRefs.forEach(g => {
+    const classNames = ["الفصل 1", "الفصل 2", "الفصل 3"];
+    classNames.forEach(cName => {
+      const ref = doc(collection(db, CLASSES_COLL));
+      batch.set(ref, {
+        name: cName,
+        gradeId: g.id,
+        userId: uid
+      });
+      classRefs.push({ name: cName, gradeId: g.id, ref, id: ref.id });
+    });
+  });
 
   // 3. Seed Teachers
-  const teachers = [
-    { id: "teacher-1", name: "أ.احمد بزرون" },
-    { id: "teacher-2", name: "أ.أمين البراك" },
-    { id: "teacher-3", name: "أ.عادل العتيق" }
+  const teachersToSeed = [
+    "أ/ أحمد المحمد",
+    "أ/ خالد عبد العزيز",
+    "أ/ محمد السديري",
+    "أ/ فهد الدوسري",
+    "أ/ ياسر الحربي"
   ];
-  for (const t of teachers) {
-    batch.set(doc(db, TEACHERS_COLL, t.id), { name: t.name });
-  }
+  teachersToSeed.forEach(tName => {
+    const ref = doc(collection(db, TEACHERS_COLL));
+    batch.set(ref, {
+      name: tName,
+      userId: uid
+    });
+  });
 
   // 4. Seed Students
-  const students = [
-    // الصف الثاني - الفصل 5
-    { id: "student-25-1", name: "بلال بن محمد بن صقر المنجور", gradeId: "grade-2", classId: "class-2-5" },
-    { id: "student-25-2", name: "جواد بن حسين بن منصور ال امحيميد", gradeId: "grade-2", classId: "class-2-5" },
-    { id: "student-25-3", name: "جواد بن محمد بن حسين آل اعبيد", gradeId: "grade-2", classId: "class-2-5" },
-    { id: "student-25-4", name: "حسن بن علي بن إبراهيم آل حرز", gradeId: "grade-2", classId: "class-2-5" },
-    { id: "student-25-5", name: "حسن بن علي بن قاسم الشبيب", gradeId: "grade-2", classId: "class-2-5" },
-    { id: "student-25-6", name: "حسن بن محمد بن حسن الكعيبي", gradeId: "grade-2", classId: "class-2-5" },
-    
-    // الصف الثاني - الفصل 3
-    { id: "student-23-1", name: "إبراهيم بن فؤاد بن ابراهيم المسبح", gradeId: "grade-2", classId: "class-2-3" },
-    { id: "student-23-2", name: "أحمد بن أمين بن منصور الكعيبي", gradeId: "grade-2", classId: "class-2-3" },
-    { id: "student-23-3", name: "أحمد بن جعفر بن حبيب المرهون", gradeId: "grade-2", classId: "class-2-3" },
-    { id: "student-23-4", name: "أحمد بن صالح بن علي سقلب", gradeId: "grade-2", classId: "class-2-3" },
-
-    // الصف الأول - الفصل الأول
-    { id: "student-11-1", name: "احمد اسامه نصرالدين ابراهيم", gradeId: "grade-1", classId: "class-1-1" },
-    { id: "student-11-2", name: "أحمد بن محمد بن حمود الجعيبي", gradeId: "grade-1", classId: "class-1-1" },
-    { id: "student-11-3", name: "حسن بن حاتم بن علي الكعيبي", gradeId: "grade-1", classId: "class-1-1" },
-    { id: "student-11-4", name: "حسن بن راضي بن علي العوامي", gradeId: "grade-1", classId: "class-1-1" },
-    { id: "student-11-5", name: "حسن بن سعيد بن احمد آل ابريق", gradeId: "grade-1", classId: "class-1-1" }
+  const studentNamesPool = [
+    "عبد الله بن علي العتيبي",
+    "سليمان بن محمد النخيل",
+    "عبد الرحمن بن فهد الحربي",
+    "عبد العزيز بن صالح الشمري",
+    "فيصل بن خالد الدوسري",
+    "ماجد بن أحمد القحطاني",
+    "بدر بن عبد الله المطيري",
+    "نايف بن محمد السبيعي",
+    "محمد بن صالح الخالدي",
+    "صالح بن علي السبيعي",
+    "أحمد بن عبد العزيز اليوسف",
+    "خالد بن محمد السديري",
+    "فهد بن سليمان الدوسري",
+    "سلطان بن فهد العتيبي",
+    "يوسف بن عبد الله الخالدي",
+    "مشعل بن عبد العزيز السبيعي",
+    "تركي بن فهد الحارثي",
+    "رائد بن صالح الزهراني",
+    "عبد الإله بن خالد العنزي",
+    "سلمان بن محمد الغامدي",
+    "نواف بن فهد الحربي",
+    "عبد الله بن سعيد الشهري",
+    "مهند بن عبد العزيز المطيري",
+    "فواز بن صالح الدوسري"
   ];
-  for (const s of students) {
-    batch.set(doc(db, STUDENTS_COLL, s.id), { 
-      name: s.name, 
-      gradeId: s.gradeId, 
-      classId: s.classId 
-    });
-  }
 
-  // 5. Seed Pre-recorded Behaviors for "إبراهيم بن فؤاد بن ابراهيم المسبح"
-  const behaviors = [
-    {
-      id: "behavior-1",
-      studentId: "student-23-1",
-      date: "2026-04-22",
-      period: "الحصة: 3",
-      teacherId: "teacher-2",
-      teacherName: "أ.أمين البراك",
-      violation: "النوم أثناء الحصة"
-    },
-    {
-      id: "behavior-2",
-      studentId: "student-23-1",
-      date: "2026-05-04",
-      period: "الحصة: 6",
-      teacherId: "teacher-3",
-      teacherName: "أ.عادل العتيق",
-      violation: "النوم أثناء الحصة"
+  // Distribute 5 students to each class
+  let nameIndex = 0;
+  classRefs.forEach(cls => {
+    for (let i = 0; i < 5; i++) {
+      const sName = studentNamesPool[nameIndex % studentNamesPool.length];
+      nameIndex++;
+      const sRef = doc(collection(db, STUDENTS_COLL));
+      batch.set(sRef, {
+        name: sName,
+        gradeId: cls.gradeId,
+        classId: cls.id,
+        userId: uid
+      });
     }
-  ];
-  for (const b of behaviors) {
-    batch.set(doc(db, BEHAVIORS_COLL, b.id), {
-      studentId: b.studentId,
-      date: b.date,
-      period: b.period,
-      teacherId: b.teacherId,
-      teacherName: b.teacherName,
-      violation: b.violation,
-      timestamp: new Date(b.date)
-    });
-  }
-
-  // 6. Seed Attendance record from screenshot 1
-  // الصف الثاني | الفصل 5 | الحصة 4
-  // 1: بلال - حاضر, 2: جواد بن حسين - غائب, 3: جواد بن محمد - حاضر, 4: حسن بن علي - حاضر, 5: حسن بن علي قاسم - حاضر, 6: حسن بن محمد - حاضر
-  const attendance1 = {
-    date: getTodayDateString(),
-    period: "حصة 4",
-    gradeId: "grade-2",
-    classId: "class-2-5",
-    teacherId: "teacher-1",
-    present: ["student-25-1", "student-25-3", "student-25-4", "student-25-5", "student-25-6"],
-    absent: ["student-25-2"],
-    isNoAbsence: false
-  };
-  batch.set(doc(db, ATTENDANCE_COLL, "attendance-seed-1"), {
-    ...attendance1,
-    timestamp: new Date()
   });
 
   await batch.commit();

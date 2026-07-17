@@ -39,7 +39,8 @@ import {
   Settings,
   Layers,
   AlertCircle,
-  Key
+  Key,
+  Loader2
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -54,6 +55,8 @@ interface AdminPanelProps {
   onRefreshData: () => Promise<void>;
   activeSubTab?: "stats" | "grades" | "teachers" | "students";
   setActiveSubTab?: (tab: "stats" | "grades" | "teachers" | "students") => void;
+  isReadOnly?: boolean;
+  onTodayStatsChange?: (stats: { absentCount: number; behaviorCount: number }) => void;
 }
 
 const getTodayDateString = () => {
@@ -164,9 +167,11 @@ export default function AdminPanel({
   setStudents,
   onRefreshData,
   activeSubTab: propActiveSubTab,
-  setActiveSubTab: propSetActiveSubTab 
+  setActiveSubTab: propSetActiveSubTab,
+  isReadOnly = false,
+  onTodayStatsChange
 }: AdminPanelProps) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
   const [pin, setPin] = useState<string>("");
   const [pinError, setPinError] = useState<string>("");
 
@@ -396,6 +401,7 @@ export default function AdminPanel({
     recentLogs: [] as { type: "حضور" | "سلوك"; title: string; subtitle: string; date: string }[]
   });
   const [statsLoading, setStatsLoading] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
 
   // Feedback Messages
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -440,14 +446,18 @@ export default function AdminPanel({
   // Submit PIN for authorization
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === "1234") {
-      setIsAuthenticated(true);
-      setPinError("");
-      loadStatistics();
-    } else {
-      setPinError("رمز المرور خاطئ! الرجاء المحاولة مرة أخرى.");
-      setPin("");
-    }
+    setSubmitting(prev => ({ ...prev, pin: true }));
+    setTimeout(() => {
+      if (pin === "1234") {
+        setIsAuthenticated(true);
+        setPinError("");
+        loadStatistics();
+      } else {
+        setPinError("رمز المرور خاطئ! الرجاء المحاولة مرة أخرى.");
+        setPin("");
+      }
+      setSubmitting(prev => ({ ...prev, pin: false }));
+    }, 450);
   };
 
   // Delete specific student absence record
@@ -756,6 +766,10 @@ export default function AdminPanel({
         grade3Entries: g3Entries,
         entriesByGrade
       });
+
+      if (onTodayStatsChange) {
+        onTodayStatsChange({ absentCount, behaviorCount });
+      }
     } catch (e) {
       console.error("Error computing stats:", e);
     }
@@ -939,7 +953,7 @@ export default function AdminPanel({
   }, [searchGradeId, classes]);
 
   useEffect(() => {
-    if (isAuthenticated && activeSubTab === "stats") {
+    if ((isAuthenticated || isReadOnly) && activeSubTab === "stats") {
       setStatsLoading(true);
       
       let currentAttendance: AttendanceRecord[] = [];
@@ -975,12 +989,13 @@ export default function AdminPanel({
         unsubBehaviors();
       };
     }
-  }, [isAuthenticated, activeSubTab, students, classes, grades]);
+  }, [isAuthenticated, isReadOnly, activeSubTab, students, classes, grades]);
 
   // --- CRUD HANDLERS (Grades & Classes) ---
   const handleAddGradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGradeName.trim()) return;
+    setSubmitting(prev => ({ ...prev, addGrade: true }));
     try {
       const newId = await addGrade(newGradeName.trim());
       setGrades(prev => {
@@ -998,6 +1013,8 @@ export default function AdminPanel({
       onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة الصف", "error");
+    } finally {
+      setSubmitting(prev => ({ ...prev, addGrade: false }));
     }
   };
 
@@ -1006,6 +1023,7 @@ export default function AdminPanel({
       "حذف الصف الدراسي",
       `هل أنت متأكد من حذف ${name}؟ سيتم حذف جميع الفصول والطلاب التابعين له تلقائياً ولا يمكن التراجع عن هذا الإجراء.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: true }));
         try {
           setGrades(prev => prev.filter(g => g.id !== id));
           setClasses(prev => prev.filter(c => c.gradeId !== id));
@@ -1018,6 +1036,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: false }));
         }
       }
     );
@@ -1037,6 +1057,7 @@ export default function AdminPanel({
       return;
     }
 
+    setSubmitting(prev => ({ ...prev, addClass: true }));
     try {
       const newId = await addClass(className, selectedGradeIdForClasses);
       setClasses(prev => {
@@ -1060,6 +1081,8 @@ export default function AdminPanel({
       onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة الفصل", "error");
+    } finally {
+      setSubmitting(prev => ({ ...prev, addClass: false }));
     }
   };
 
@@ -1068,6 +1091,7 @@ export default function AdminPanel({
       "حذف الفصل الدراسي",
       `هل أنت متأكد من حذف فصل ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: true }));
         try {
           setClasses(prev => prev.filter(c => c.id !== id));
           setStudents(prev => prev.filter(s => s.classId !== id));
@@ -1076,6 +1100,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: false }));
         }
       }
     );
@@ -1092,12 +1118,13 @@ export default function AdminPanel({
     if (isDuplicate) {
       setAlertState({
         title: "تنبيه: المعلم مكرر ⚠️",
-        message: `المعلم "${trimmedName}" مسجل بالفعل في النظام. تم تجاهل الإضافة لتفادي التكرار.`,
+        message: `المعلم "${trimmedName}" مسجل بالفعل في النظام.\n\nتم تجاهل الإضافة لوجود تكرار (عدد التكرار: 1). تم تجاهل هذا الاسم لتفادي التكرار.`,
         type: "warning"
       });
       return;
     }
 
+    setSubmitting(prev => ({ ...prev, addTeacher: true }));
     try {
       const newId = await addTeacher(trimmedName);
       setTeachers(prev => {
@@ -1109,6 +1136,8 @@ export default function AdminPanel({
       onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة المعلم", "error");
+    } finally {
+      setSubmitting(prev => ({ ...prev, addTeacher: false }));
     }
   };
 
@@ -1117,6 +1146,7 @@ export default function AdminPanel({
       "حذف المعلم",
       `هل أنت متأكد من حذف المعلم ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: true }));
         try {
           setSelectedTeacherIds(prev => prev.filter(tId => tId !== id));
           setTeachers(prev => prev.filter(t => t.id !== id));
@@ -1125,6 +1155,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: false }));
         }
       }
     );
@@ -1148,20 +1180,23 @@ export default function AdminPanel({
       const className = cls ? cls.name : "الفصل المحدد";
       setAlertState({
         title: "تنبيه: الطالب مكرر ⚠️",
-        message: `الطالب "${trimmedName}" مسجل بالفعل في ${className}. تم تجاهل الإضافة لتفادي التكرار.`,
+        message: `الطالب "${trimmedName}" مسجل بالفعل في ${className}.\n\nتم تجاهل الإضافة لوجود تكرار (عدد التكرار: 1). تم تجاهل هذا الاسم لتفادي التكرار.`,
         type: "warning"
       });
       return;
     }
 
+    setSubmitting(prev => ({ ...prev, addStudent: true }));
     try {
       const newId = await addStudent(trimmedName, newStudentGradeId, newStudentClassId);
-      setStudents(prev => [...prev, { id: newId, name: trimmedName, gradeId: newStudentGradeId, classId: newStudentClassId }]);
+      setStudents(prev => [...prev, { id: newId, name: trimmedName, gradeId: newStudentGradeId, classId: newStudentClassId }].sort((a, b) => a.name.localeCompare(b.name, "ar")));
       setNewStudentName("");
       showMessage("تم إضافة الطالب بنجاح!");
       onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة الطالب", "error");
+    } finally {
+      setSubmitting(prev => ({ ...prev, addStudent: false }));
     }
   };
 
@@ -1170,6 +1205,7 @@ export default function AdminPanel({
       "حذف الطالب",
       `هل أنت متأكد من حذف الطالب ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: true }));
         try {
           setSelectedStudentIds(prev => prev.filter(sId => sId !== id));
           setStudents(prev => prev.filter(s => s.id !== id));
@@ -1178,6 +1214,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: false }));
         }
       }
     );
@@ -1189,6 +1227,7 @@ export default function AdminPanel({
       "حذف الطلاب المحددين",
       `هل أنت متأكد من حذف عدد ${selectedStudentIds.length} طالب دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, deleteSelectedStudents: true }));
         try {
           const idsToDelete = [...selectedStudentIds];
           setSelectedStudentIds([]);
@@ -1200,6 +1239,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء حذف الطلاب", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, deleteSelectedStudents: false }));
         }
       }
     );
@@ -1211,6 +1252,7 @@ export default function AdminPanel({
       "حذف المعلمين المحددين",
       `هل أنت متأكد من حذف عدد ${selectedTeacherIds.length} معلم دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
+        setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: true }));
         try {
           const idsToDelete = [...selectedTeacherIds];
           setSelectedTeacherIds([]);
@@ -1222,6 +1264,8 @@ export default function AdminPanel({
           onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء حذف المعلمين", "error");
+        } finally {
+          setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: false }));
         }
       }
     );
@@ -1254,6 +1298,7 @@ export default function AdminPanel({
       showMessage("يرجى التأكد من اختيار الصف والفصل ولصق أسماء الطلاب", "error");
       return;
     }
+    setSubmitting(prev => ({ ...prev, importStudents: true }));
     try {
       setStatsLoading(true);
       
@@ -1284,7 +1329,7 @@ export default function AdminPanel({
       if (uniqueNamesInImport.length === 0) {
         setAlertState({
           title: "تنبيه: كافة الطلاب مكررين ⚠️",
-          message: `جميع الأسماء المدخلة (${totalSkipped} طالب) مكررة ومسجلة بالفعل في هذا الفصل أو مكررة في القائمة المدخلة. لم يتم إضافة أي اسم جديد لتفادي التكرار.`,
+          message: `جميع الأسماء المدخلة (${totalSkipped} طالب) مكررة ومسجلة بالفعل في هذا الفصل أو مكررة في القائمة المدخلة. تم تجاهل الإضافة لتفادي التكرار.`,
           type: "warning"
         });
         setPastedStudentsText("");
@@ -1316,6 +1361,7 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء استيراد قائمة الطلاب", "error");
     } finally {
       setStatsLoading(false);
+      setSubmitting(prev => ({ ...prev, importStudents: false }));
     }
   };
 
@@ -1344,6 +1390,7 @@ export default function AdminPanel({
       showMessage("يرجى لصق أسماء المعلمين أولاً", "error");
       return;
     }
+    setSubmitting(prev => ({ ...prev, importTeachers: true }));
     try {
       setStatsLoading(true);
       
@@ -1374,7 +1421,7 @@ export default function AdminPanel({
       if (uniqueNamesInImport.length === 0) {
         setAlertState({
           title: "تنبيه: كافة المعلمين مكررين ⚠️",
-          message: `جميع الأسماء المدخلة (${totalSkipped} معلم) مكررة ومسجلة بالفعل في المدرسة أو مكررة في القائمة المدخلة. لم يتم إضافة أي اسم جديد لتفادي التكرار.`,
+          message: `جميع الأسماء المدخلة (${totalSkipped} معلم) مكررة ومسجلة بالفعل في المدرسة أو مكررة في القائمة المدخلة. تم تجاهل الإضافة لتفادي التكرار.`,
           type: "warning"
         });
         setPastedTeachersText("");
@@ -1400,6 +1447,7 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء استيراد قائمة المعلمين", "error");
     } finally {
       setStatsLoading(false);
+      setSubmitting(prev => ({ ...prev, importTeachers: false }));
     }
   };
 
@@ -1437,6 +1485,7 @@ export default function AdminPanel({
       showMessage("يرجى إرفاق ملف الهيكل الأكاديمي المرفق أولاً", "error");
       return;
     }
+    setSubmitting(prev => ({ ...prev, importGrades: true }));
     try {
       setStatsLoading(true);
       const gradeMap: Record<string, string> = {};
@@ -1465,6 +1514,7 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء استيراد الهيكل الأكاديمي", "error");
     } finally {
       setStatsLoading(false);
+      setSubmitting(prev => ({ ...prev, importGrades: false }));
     }
   };
 
@@ -1476,7 +1526,7 @@ export default function AdminPanel({
   });
 
   // --- UNATHENTICATED PIN SCREEN ---
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !isReadOnly) {
     return (
       <div id="admin-pin-screen" className="max-w-md mx-auto bg-white rounded-2xl shadow-md border border-slate-100 p-8 text-center space-y-6 mt-12">
         <div className="mx-auto bg-blue-50 text-blue-600 p-4 rounded-full w-fit">
@@ -1500,10 +1550,15 @@ export default function AdminPanel({
           
           <button
             type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-2 text-xs transition"
+            disabled={submitting.pin}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-2 text-xs transition"
           >
-            <Unlock className="w-4 h-4" />
-            <span>تأكيد تسجيل الدخول كمدير</span>
+            {submitting.pin ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Unlock className="w-4 h-4" />
+            )}
+            <span>{submitting.pin ? "جاري التحقق..." : "تأكيد تسجيل الدخول كمدير"}</span>
           </button>
         </form>
 
@@ -1529,42 +1584,30 @@ export default function AdminPanel({
 
       {/* SUB-TAB 1: STATISTICS & ANALYTICS */}
       {activeSubTab === "stats" && (
-        <div className="space-y-6 animate-fadeIn">
-          {/* Today Summary Pills */}
-          <div className="grid grid-cols-2 gap-4 max-w-xs mx-auto print:hidden">
-            <div className="bg-white rounded-xl border-b-2 border-rose-500 shadow-3xs p-2.5 flex flex-col items-center justify-center transition hover:shadow-xs">
-              <span className="text-[10px] text-slate-400 font-extrabold mb-0.5">غياب اليوم</span>
-              <span className="text-base font-black text-slate-800">{todayStats.absentCount}</span>
-            </div>
-            <div className="bg-white rounded-xl border-b-2 border-amber-500 shadow-3xs p-2.5 flex flex-col items-center justify-center transition hover:shadow-xs">
-              <span className="text-[10px] text-slate-400 font-extrabold mb-0.5">سلوك اليوم</span>
-              <span className="text-base font-black text-slate-800">{todayStats.behaviorCount}</span>
-            </div>
-          </div>
-
+        <div className="space-y-4 animate-fadeIn">
           {/* Sub-navigation Tabs & Print bar */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-100 shadow-3xs print:hidden">
-            {/* Tabs Selector */}
-            <div className="flex flex-wrap items-center gap-1.5" dir="rtl">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white p-2 rounded-xl border border-slate-100 shadow-3xs print:hidden">
+            {/* Condensed Tabs Selector */}
+            <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg" dir="rtl">
               <button
                 type="button"
                 onClick={() => setActiveStatsTab("attendance")}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "attendance"
-                    ? "bg-rose-50 text-rose-700 border border-rose-200 shadow-3xs"
-                    : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-transparent"
+                    ? "bg-white text-rose-700 shadow-3xs border border-slate-200/50"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
                 <span>الغياب</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveStatsTab("selected_attendance")}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "selected_attendance"
-                    ? "bg-blue-50 text-blue-700 border border-blue-200 shadow-3xs"
-                    : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-transparent"
+                    ? "bg-white text-blue-700 shadow-3xs border border-slate-200/50"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
                 <span>🔍</span>
@@ -1573,10 +1616,10 @@ export default function AdminPanel({
               <button
                 type="button"
                 onClick={() => setActiveStatsTab("behavior")}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "behavior"
-                    ? "bg-amber-50 text-amber-700 border border-amber-200 shadow-3xs"
-                    : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-transparent"
+                    ? "bg-white text-amber-700 shadow-3xs border border-slate-200/50"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
                 <span>📝</span>
@@ -1585,10 +1628,10 @@ export default function AdminPanel({
               <button
                 type="button"
                 onClick={() => setActiveStatsTab("student_report")}
-                className={`px-4 py-2.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "student_report"
-                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-3xs"
-                    : "bg-slate-50 text-slate-600 hover:bg-slate-100 border border-transparent"
+                    ? "bg-white text-emerald-700 shadow-3xs border border-slate-200/50"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
                 <span>📋</span>
@@ -1662,13 +1705,13 @@ export default function AdminPanel({
                               <th className="py-1.5 px-2 text-right">طالب</th>
                               <th className="py-1.5 px-2 text-center">ح ص</th>
                               <th className="py-1.5 px-2 text-right">معلم</th>
-                              <th className="py-1.5 px-1.5 text-center">⚙️</th>
+                              {!isReadOnly && <th className="py-1.5 px-1.5 text-center">⚙️</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {gradeEntries.length === 0 ? (
                               <tr>
-                                <td colSpan={5} className="py-12 text-center text-slate-400 font-black">
+                                <td colSpan={isReadOnly ? 4 : 5} className="py-12 text-center text-slate-400 font-black">
                                   <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب مسجل</span>
                                 </td>
                               </tr>
@@ -1712,16 +1755,18 @@ export default function AdminPanel({
                                     </div>
                                   </td>
                                   <td className="py-0.5 px-2 text-slate-600 font-semibold text-[9.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
-                                  <td className="py-0.5 px-1.5 text-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
-                                      className="text-slate-400 hover:text-rose-600 p-0.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-                                      title="حذف هذا تسجيل الغياب"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </td>
+                                  {!isReadOnly && (
+                                    <td className="py-0.5 px-1.5 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
+                                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                        title="حذف هذا تسجيل الغياب"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </td>
+                                  )}
                                 </tr>
                               ))
                             )}
@@ -1851,13 +1896,13 @@ export default function AdminPanel({
                       <th className="py-2.5 px-4 text-right">الصف / الفصل</th>
                       <th className="py-2.5 px-4 text-right">المخالفة / الملاحظة</th>
                       <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
-                      <th className="py-2.5 px-2 text-center">⚙️</th>
+                      {!isReadOnly && <th className="py-2.5 px-2 text-center">⚙️</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {stats.recentLogs.filter(l => l.type === "سلوك" && l.date === getTodayDateString()).length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-12 text-center text-slate-400 font-extrabold">
+                        <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 font-extrabold">
                           لا توجد مخالفات سلوكية مرصودة اليوم 👍
                         </td>
                       </tr>
@@ -1882,43 +1927,45 @@ export default function AdminPanel({
                                 </span>
                               </td>
                               <td className="py-3 px-4 text-slate-500 font-medium">معلم الحصة</td>
-                              <td className="py-3 px-2 text-center">
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    confirmAction(
-                                      "حذف المخالفة السلوكية",
-                                      "هل أنت متأكد من حذف هذه الملاحظة السلوكية؟ لا يمكن التراجع عن هذا الإجراء.",
-                                      async () => {
-                                        try {
-                                          setStatsLoading(true);
-                                          // Find and delete behavior record matching details
-                                          const bRecords = await getAllBehaviorRecords();
-                                          const matched = bRecords.find(b => {
-                                            const s = students.find(st => st.id === b.studentId);
-                                            return s?.name === studentName && b.violation === log.subtitle.replace("المخالفة: ", "") && b.date === getTodayDateString();
-                                          });
-                                          
-                                          if (matched) {
-                                            const { deleteBehaviorRecord } = await import("../dbService");
-                                            await deleteBehaviorRecord(matched.id);
-                                            showMessage("تم حذف السلوك السلبي بنجاح!");
-                                            await loadStatistics();
+                              {!isReadOnly && (
+                                <td className="py-3 px-2 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      confirmAction(
+                                        "حذف المخالفة السلوكية",
+                                        "هل أنت متأكد من حذف هذه الملاحظة السلوكية؟ لا يمكن التراجع عن هذا الإجراء.",
+                                        async () => {
+                                          try {
+                                            setStatsLoading(true);
+                                            // Find and delete behavior record matching details
+                                            const bRecords = await getAllBehaviorRecords();
+                                            const matched = bRecords.find(b => {
+                                              const s = students.find(st => st.id === b.studentId);
+                                              return s?.name === studentName && b.violation === log.subtitle.replace("المخالفة: ", "") && b.date === getTodayDateString();
+                                            });
+                                            
+                                            if (matched) {
+                                              const { deleteBehaviorRecord } = await import("../dbService");
+                                              await deleteBehaviorRecord(matched.id);
+                                              showMessage("تم حذف السلوك السلبي بنجاح!");
+                                              await loadStatistics();
+                                            }
+                                          } catch (e) {
+                                            console.error("Error deleting behavior record:", e);
+                                          } finally {
+                                            setStatsLoading(false);
                                           }
-                                        } catch (e) {
-                                          console.error("Error deleting behavior record:", e);
-                                        } finally {
-                                          setStatsLoading(false);
                                         }
-                                      }
-                                    );
-                                  }}
-                                  className="text-rose-400 hover:text-rose-600 p-1 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                  title="حذف هذا السلوك"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
+                                      );
+                                    }}
+                                    className="text-rose-400 hover:text-rose-600 p-1 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                    title="حذف هذا السلوك"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              )}
                             </tr>
                           );
                         })
@@ -2194,10 +2241,14 @@ export default function AdminPanel({
                   <button
                     type="button"
                     onClick={handleGradesImportSubmit}
-                    disabled={statsLoading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs"
+                    disabled={statsLoading || submitting.importGrades}
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs"
                   >
-                    <UploadCloud className="w-4 h-4" />
+                    {submitting.importGrades ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <UploadCloud className="w-4 h-4" />
+                    )}
                     <span>تأكيد اعتماد وبناء الهيكل المرفق ({parsedGradesStructure.length})</span>
                   </button>
                 </div>
@@ -2257,9 +2308,14 @@ export default function AdminPanel({
                   />
                   <button
                     type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1 whitespace-nowrap transition"
+                    disabled={submitting.addGrade}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1 whitespace-nowrap transition animate-pulse-once"
                   >
-                    <Plus className="w-3.5 h-3.5" />
+                    {submitting.addGrade ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-3.5 h-3.5" />
+                    )}
                     <span>إضافة صف</span>
                   </button>
                 </form>
@@ -2296,10 +2352,15 @@ export default function AdminPanel({
                             <button
                               type="button"
                               onClick={() => handleDeleteGrade(grade.id, grade.name)}
+                              disabled={submitting['deleteGrade_' + grade.id]}
                               className="text-rose-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition"
                               title="حذف الصف بكامل فصوله"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              {submitting['deleteGrade_' + grade.id] ? (
+                                <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
                             </button>
                           </div>
                         </div>
@@ -2346,9 +2407,14 @@ export default function AdminPanel({
                     <button
                       type="button"
                       onClick={handleAddClassSequence}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                      disabled={submitting.addClass}
+                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
                     >
-                      <Plus className="w-4 h-4" />
+                      {submitting.addClass ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Plus className="w-4 h-4" />
+                      )}
                       <span>إضافة "الفصل {selectedClassNumber}" للصف الدراسي</span>
                     </button>
 
@@ -2371,9 +2437,14 @@ export default function AdminPanel({
                               <button
                                 type="button"
                                 onClick={() => handleDeleteClass(cls.id, cls.name)}
+                                disabled={submitting['deleteClass_' + cls.id]}
                                 className="text-rose-400 hover:text-rose-600 p-1"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                {submitting['deleteClass_' + cls.id] ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
                               </button>
                             </div>
                           );
@@ -2448,9 +2519,14 @@ export default function AdminPanel({
                   </div>
                   <button
                     type="submit"
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs"
+                    disabled={submitting.addTeacher}
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs"
                   >
-                    <Plus className="w-4 h-4" />
+                    {submitting.addTeacher ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
                     <span>تسجيل المعلم في المدرسة</span>
                   </button>
                 </form>
@@ -2490,10 +2566,14 @@ export default function AdminPanel({
 
                   <button
                     type="submit"
-                    disabled={parsedTeacherNames.length === 0 || statsLoading}
+                    disabled={parsedTeacherNames.length === 0 || statsLoading || submitting.importTeachers}
                     className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
                   >
-                    <Plus className="w-4 h-4" />
+                    {submitting.importTeachers ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
                     <span>اعتماد واستيراد {parsedTeacherNames.length} معلم دفعة واحدة 📋</span>
                   </button>
                 </form>
@@ -2539,9 +2619,14 @@ export default function AdminPanel({
                     <button
                       type="button"
                       onClick={handleDeleteSelectedTeachers}
-                      className="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1 rounded-xl text-3xs font-black flex items-center gap-1 transition-all shadow-xs"
+                      disabled={submitting.deleteSelectedTeachers}
+                      className="bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white px-3 py-1 rounded-xl text-3xs font-black flex items-center gap-1 transition-all shadow-xs"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      {submitting.deleteSelectedTeachers ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3 h-3" />
+                      )}
                       <span>حذف المعلمين المحددين ({selectedTeacherIds.length})</span>
                     </button>
                   )}
@@ -2624,10 +2709,15 @@ export default function AdminPanel({
                                     <button
                                       type="button"
                                       onClick={() => handleDeleteTeacher(t.id, t.name)}
+                                      disabled={submitting['deleteTeacher_' + t.id]}
                                       className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition"
                                       title="حذف المعلم"
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />
+                                      {submitting['deleteTeacher_' + t.id] ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
+                                      ) : (
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      )}
                                     </button>
                                   </div>
                                 </td>
@@ -2674,12 +2764,13 @@ export default function AdminPanel({
             <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-slate-200">
               {grades.map((grade) => {
                 const isSelected = selectedGradeId === grade.id;
+                const studentCount = students.filter(s => s.gradeId === grade.id).length;
                 return (
                   <button
                     key={grade.id}
                     type="button"
                     onClick={() => setSelectedGradeId(grade.id)}
-                    className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${
                       isSelected
                         ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                         : "bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100/80"
@@ -2687,6 +2778,9 @@ export default function AdminPanel({
                   >
                     <GraduationCap className="w-4 h-4" />
                     <span>{grade.name}</span>
+                    <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-200/80 shadow-xs">
+                      {studentCount}
+                    </span>
                     {isSelected && <span className="w-1.5 h-1.5 bg-white rounded-full"></span>}
                   </button>
                 );
@@ -2707,19 +2801,23 @@ export default function AdminPanel({
               <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-200 flex-wrap">
                 {classes.filter(c => c.gradeId === selectedGradeId).map((cls) => {
                   const isSelected = selectedClassId === cls.id;
+                  const studentCount = students.filter(s => s.classId === cls.id).length;
 
                   return (
                     <button
                       key={cls.id}
                       type="button"
                       onClick={() => setSelectedClassId(cls.id)}
-                      className={`flex items-center gap-1.5 px-4.5 py-2.5 rounded-xl text-xs font-black transition-all border ${
+                      className={`flex items-center gap-2 px-4.5 py-2.5 rounded-xl text-xs font-black transition-all border ${
                         isSelected
                           ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/10"
                           : "bg-slate-50 border border-slate-200 text-slate-600 hover:bg-slate-100/80"
                       }`}
                     >
                       <span>{cls.name}</span>
+                      <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-red-50 text-red-600 border border-red-200/80 shadow-xs">
+                        {studentCount}
+                      </span>
                     </button>
                   );
                 })}
@@ -2822,9 +2920,14 @@ export default function AdminPanel({
                       <div className="sm:col-span-3">
                         <button
                           type="submit"
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                          disabled={submitting.addStudent}
+                          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
                         >
-                          <Plus className="w-4 h-4" />
+                          {submitting.addStudent ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Plus className="w-4 h-4" />
+                          )}
                           <span>إضافة الطالب</span>
                         </button>
                       </div>
@@ -2861,10 +2964,14 @@ export default function AdminPanel({
 
                       <button
                         type="submit"
-                        disabled={parsedStudentNames.length === 0 || statsLoading}
+                        disabled={parsedStudentNames.length === 0 || statsLoading || submitting.importStudents}
                         className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
                       >
-                        <Plus className="w-4 h-4" />
+                        {submitting.importStudents ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Plus className="w-4 h-4" />
+                        )}
                         <span>اعتماد واستيراد {parsedStudentNames.length} طالب دفعة واحدة</span>
                       </button>
                     </form>
@@ -2891,9 +2998,14 @@ export default function AdminPanel({
                     <button
                       type="button"
                       onClick={handleDeleteSelectedStudents}
-                      className="bg-rose-500 hover:bg-rose-600 text-white px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-md transform hover:scale-[1.02] active:scale-95"
+                      disabled={submitting.deleteSelectedStudents}
+                      className="bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-md transform hover:scale-[1.02] active:scale-95"
                     >
-                      <Trash2 className="w-3.5 h-3.5 animate-bounce" />
+                      {submitting.deleteSelectedStudents ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5 animate-bounce" />
+                      )}
                       <span>حذف الطلاب المحددين ({selectedStudentIds.length})</span>
                     </button>
                   )}
@@ -2906,7 +3018,7 @@ export default function AdminPanel({
                     const term = studentSearchQuery.trim().toLowerCase();
                     if (!term) return true;
                     return s.name.toLowerCase().includes(term);
-                  });
+                  }).sort((a, b) => a.name.localeCompare(b.name, "ar"));
 
                   if (classStudents.length === 0) {
                     return (
@@ -2992,10 +3104,15 @@ export default function AdminPanel({
                                     <button
                                       type="button"
                                       onClick={() => handleDeleteStudent(st.id, st.name)}
+                                      disabled={submitting['deleteStudent_' + st.id]}
                                       className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition"
                                       title="حذف الطالب"
                                     >
-                                      <Trash2 className="w-4 h-4" />
+                                      {submitting['deleteStudent_' + st.id] ? (
+                                        <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                                      ) : (
+                                        <Trash2 className="w-4 h-4" />
+                                      )}
                                     </button>
                                   </div>
                                 </td>

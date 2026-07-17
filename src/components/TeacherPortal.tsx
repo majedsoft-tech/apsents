@@ -24,7 +24,8 @@ import {
   ChevronRight, 
   FileText,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Loader2
 } from "lucide-react";
 
 interface TeacherPortalProps {
@@ -686,7 +687,11 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                 ease: "easeInOut"
               }}
             >
-              <Save className={`w-5 h-5 ${isDirty && students.length > 0 ? "animate-bounce" : ""}`} />
+              {attendanceLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Save className={`w-5 h-5 ${isDirty && students.length > 0 ? "animate-bounce" : ""}`} />
+              )}
               <span>
                 {attendanceLoading 
                   ? "جاري حفظ الغياب..." 
@@ -836,7 +841,11 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                                   disabled={behaviorLoading || !selectedViolation || (selectedViolation === "other" && !customViolationText.trim())}
                                   className="w-full bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition active:scale-98"
                                 >
-                                  <Save className="w-3.5 h-3.5" />
+                                  {behaviorLoading ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Save className="w-3.5 h-3.5" />
+                                  )}
                                   <span>{behaviorLoading ? "جاري الحفظ..." : "تسجيل السلوك"}</span>
                                 </button>
                               </div>
