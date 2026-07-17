@@ -1,12 +1,12 @@
 {
-  "projectId": "spheric-reporter-w07pf",
-  "appId": "1:265490755228:web:30a2daac6eeb1298dfc759",
-  "apiKey": "AIzaSyAE53PHUU04iPCpiGQxcm9qDRTAzH57d8s",
-  "authDomain": "spheric-reporter-w07pf.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-38440e4c-1e71-42b1-af20-9c43adb2b969",
-  "storageBucket": "spheric-reporter-w07pf.firebasestorage.app",
-  "messagingSenderId": "265490755228",
-  "measurementId": "",
-  "oAuthClientId": "265490755228-99vc8p73eo06ltlm73k1er1qhdlm2o4p.apps.googleusercontent.com",
+  "projectId": "apsents",
+  "appId": "1:717724738568:web:a8f6ca1b77f80c30ed1dbd",
+  "apiKey": "AIzaSyCWABVdUWYt49PQXT1duAttR0ql8043yNs",
+  "authDomain": "apsents.firebaseapp.com",
+  "firestoreDatabaseId": "",
+  "storageBucket": "apsents.firebasestorage.app",
+  "messagingSenderId": "717724738568",
+  "measurementId": "G-GBSB6SX96T",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
