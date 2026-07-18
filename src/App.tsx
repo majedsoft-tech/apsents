@@ -59,7 +59,6 @@ export default function App() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [seeding, setSeeding] = useState<boolean>(false);
 
   // Responsive Navigation States
   const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only">(getInitialMode());
@@ -163,14 +162,11 @@ export default function App() {
       if (user) {
         setLoading(true);
         try {
-          setSeeding(true);
-          await seedDatabaseIfEmpty();
-          setSeeding(false);
+          // Direct dynamic load of user-specific data with no default/fallback automatic seeding
           await loadDatabaseData();
         } catch (error) {
           console.error("Initialization error:", error);
         } finally {
-          setSeeding(false);
           setLoading(false);
         }
       } else {
@@ -284,13 +280,13 @@ export default function App() {
     }
   };
 
-  if (authChecking || loading || seeding) {
+  if (authChecking || loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100" dir="rtl">
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
         <h3 className="text-lg font-bold">بوابة أم الحمام الثانوية الرقمية</h3>
         <p className="text-xs text-slate-400 mt-2">
-          {authChecking ? "جاري التحقق من حالة تسجيل الدخول..." : seeding ? "جاري تهيئة قاعدة البيانات وبناء هيكل الفصول الافتراضية والطلاب للتشغيل الأول..." : "جاري تحميل سجلات المدرسة والبيانات الحية..."}
+          {authChecking ? "جاري التحقق من حالة تسجيل الدخول..." : "جاري تحميل سجلات المدرسة والبيانات الحية..."}
         </p>
       </div>
     );
@@ -305,24 +301,25 @@ export default function App() {
             🏫
           </div>
           <div>
-            <h1 className="text-xl font-black text-white">بوابة أم الحمام الثانوية الرقمية</h1>
+            <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">SmartTeacher</h1>
             <p className="text-xs text-slate-400 mt-2 font-bold">المنصة الموحدة لإدارة ورصد غياب الطلاب وسلوكهم</p>
           </div>
 
-          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-right space-y-2">
-            <h4 className="text-2xs font-extrabold text-blue-400 uppercase tracking-wide">💡 مميزات المنصة الحية:</h4>
-            <ul className="text-3xs text-slate-300 space-y-1.5 font-bold">
-              <li className="flex items-center gap-1.5">
-                <span className="text-blue-500">•</span>
-                <span>فصل تام لبيانات كل مستخدم وسرية مطلقة</span>
+          {/* 3-point description of the application */}
+          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-right space-y-3">
+            <h4 className="text-2xs font-extrabold text-blue-400 uppercase tracking-wide mb-1">🔍 كيف يعمل النظام؟</h4>
+            <ul className="text-3xs text-slate-300 space-y-2 font-bold">
+              <li className="flex items-start gap-2">
+                <span className="text-blue-500 mt-0.5">•</span>
+                <span><strong className="text-slate-200">رصد غياب وسلوك الطلاب:</strong> تسجيل الحضور والغياب اليومي ورصد السلوكيات والمخالفات للفصول بضغطة زر.</span>
               </li>
-              <li className="flex items-center gap-1.5">
-                <span className="text-blue-500">•</span>
-                <span>رصد غياب يومي لحظي وفوري للفصول</span>
+              <li className="flex items-start gap-2">
+                <span className="text-blue-500 mt-0.5">•</span>
+                <span><strong className="text-slate-200">إحصائيات وتقارير ذكية:</strong> لوحة تحكم تفاعلية توضح نسب الغياب ومستوى الانضباط العام والمؤشرات البيانية.</span>
               </li>
-              <li className="flex items-center gap-1.5">
-                <span className="text-blue-500">•</span>
-                <span>إحصائيات وتقارير تفصيلية ورصد السلوك المدرسي</span>
+              <li className="flex items-start gap-2">
+                <span className="text-blue-500 mt-0.5">•</span>
+                <span><strong className="text-slate-200">مزامنة سحابية فورية:</strong> حفظ البيانات بشكل مباشر وتلقائي في قاعدة البيانات للرجوع إليها بأمان في أي وقت.</span>
               </li>
             </ul>
           </div>
@@ -432,7 +429,7 @@ export default function App() {
               🏫
             </div>
             <div>
-              <h1 className="text-sm font-black text-white tracking-wide">بوابة أم الحمام الرقمية</h1>
+              <h1 className="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300 tracking-wide">SmartTeacher</h1>
               <p className="text-3xs text-slate-400 font-bold mt-0.5">مدرسة أم الحمام الثانوية</p>
             </div>
           </div>

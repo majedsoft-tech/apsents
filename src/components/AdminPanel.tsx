@@ -1582,6 +1582,92 @@ export default function AdminPanel({
         </div>
       )}
 
+      {/* Welcome & Empty State Info Interactive Banner */}
+      {grades.length === 0 && students.length === 0 && teachers.length === 0 && (
+        <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50/50 border border-blue-100 rounded-2xl p-6 text-right space-y-5 shadow-3xs print:hidden animate-fadeIn" dir="rtl">
+          <div className="flex items-start gap-3.5">
+            <span className="text-3xl mt-0.5 animate-bounce">🌱</span>
+            <div>
+              <h3 className="text-sm font-black text-slate-800">مرحباً بك في منصة SmartTeacher الرقمية الحية!</h3>
+              <p className="text-3xs text-slate-500 font-bold mt-1 leading-relaxed">
+                لقد قمت بتسجيل الدخول بنجاح. قاعدة بياناتك الحالية فارغة تماماً ومستقلة لتضمن خصوصية تامة لسجلاتك. اتبع الخطوات التفاعلية أدناه لتهيئة مدرستك وبدء العمل في دقائق معدودة:
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-blue-100/40">
+            <h4 className="text-3xs font-black text-slate-400 mb-3 uppercase tracking-wider">الخطوات السريعة لتشغيل مدرستك (اضغط على الخطوة للانتقال والبدء فوراً):</h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              
+              {/* Step 1: Grades & Classes */}
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("grades")}
+                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-white/80 hover:bg-white border border-blue-100 hover:border-blue-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-blue-600 bg-blue-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-blue-100 transition">١</span>
+                    <span className="text-xs font-black text-slate-800">الصفوف والفصول</span>
+                  </div>
+                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
+                    ابدأ بتحديد الصفوف والمراحل الدراسية والفصول الدراسية وتعديلها لتناسب خطتك وهيكلك الأكاديمي.
+                  </p>
+                </div>
+                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-blue-600 border-t border-blue-50/50 pt-2 group-hover:text-blue-700">
+                  <span>انتقال سريع للتهيئة ⚙️</span>
+                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
+                </div>
+              </button>
+
+              {/* Step 2: Teachers */}
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("teachers")}
+                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-white/80 hover:bg-white border border-indigo-100 hover:border-indigo-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-indigo-600 bg-indigo-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-indigo-100 transition">٢</span>
+                    <span className="text-xs font-black text-slate-800">كادر المعلمين</span>
+                  </div>
+                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
+                    سجل المعلمين والمعلمات لتوزيع الفصول وتعيين الشعب والأنصبة الدراسية للتحضير الفوري بسهولة وسرعة.
+                  </p>
+                </div>
+                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-indigo-600 border-t border-indigo-50/50 pt-2 group-hover:text-indigo-700">
+                  <span>تسجيل المعلمين الآن 👤</span>
+                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
+                </div>
+              </button>
+
+              {/* Step 3: Students & Import */}
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("students")}
+                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-gradient-to-br from-emerald-50/10 to-white hover:from-emerald-50/30 hover:to-white border border-emerald-100 hover:border-emerald-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-emerald-600 bg-emerald-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-emerald-100 transition">٣</span>
+                    <span className="text-xs font-black text-slate-800">قوائم الطلاب والاستيراد</span>
+                  </div>
+                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
+                    أضف الطلاب أو استفد من ميزة <strong className="text-emerald-700 font-black">الاستيراد الذكي من ملف Excel أو نظام نور</strong> لرفع الأسماء والبيانات دفعة واحدة!
+                  </p>
+                </div>
+                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-emerald-600 border-t border-emerald-50/50 pt-2 group-hover:text-emerald-700">
+                  <span>استيراد وتنزيل القوائم 📁</span>
+                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
+                </div>
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SUB-TAB 1: STATISTICS & ANALYTICS */}
       {activeSubTab === "stats" && (
         <div className="space-y-4 animate-fadeIn">
