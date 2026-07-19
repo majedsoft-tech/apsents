@@ -395,7 +395,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
           </button>
         )}
 
-        <h1 className="text-2xl font-bold text-blue-900 mb-1">{schoolName || "مدرسة أم الحمام الثانوية"}</h1>
+        <h1 className="text-2xl font-bold text-blue-900 mb-1">{schoolName || "البوابة الرقمية للمدرسة"}</h1>
         <div className="flex items-center justify-center gap-1.5 text-slate-600 font-medium text-sm mb-2">
           <span>نظام تسجيل الغياب والسلوك</span>
           <span>📋</span>

@@ -59,6 +59,7 @@ interface AdminPanelProps {
   onTodayStatsChange?: (stats: { absentCount: number; behaviorCount: number }) => void;
   schoolName?: string;
   onSchoolNameChange?: (name: string) => void;
+  isSavingSchoolName?: boolean;
 }
 
 const getTodayDateString = () => {
@@ -173,7 +174,8 @@ export default function AdminPanel({
   isReadOnly = false,
   onTodayStatsChange,
   schoolName,
-  onSchoolNameChange
+  onSchoolNameChange,
+  isSavingSchoolName = false
 }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
   const [pin, setPin] = useState<string>("");
@@ -243,6 +245,14 @@ export default function AdminPanel({
     const saved = localStorage.getItem("onboarding_guide_visible");
     return saved !== "false";
   });
+
+  const [temporaryGlow, setTemporaryGlow] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setTemporaryGlow(false);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("student_passwords", JSON.stringify(studentPasswords));
@@ -1631,13 +1641,20 @@ export default function AdminPanel({
 
       {/* Welcome & Empty State Info Interactive Banner */}
       {grades.length === 0 && students.length === 0 && teachers.length === 0 && (
-        <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50/50 border border-blue-100 rounded-2xl p-6 text-right space-y-5 shadow-3xs print:hidden animate-fadeIn" dir="rtl">
+        <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50/50 border-2 border-indigo-400/60 rounded-2xl p-6 text-right space-y-5 shadow-md print:hidden ring-4 ring-indigo-400/30 animate-pulse" dir="rtl">
           <div className="flex items-start gap-3.5">
             <span className="text-3xl mt-0.5 animate-bounce">🌱</span>
             <div>
               <h3 className="text-sm font-black text-slate-800">مرحباً بك في منصة SmartTeacher الرقمية الحية!</h3>
               <p className="text-3xs text-slate-500 font-bold mt-1 leading-relaxed">
                 لقد قمت بتسجيل الدخول بنجاح. قاعدة بياناتك الحالية فارغة تماماً ومستقلة لتضمن خصوصية تامة لسجلاتك. اتبع الخطوات التفاعلية أدناه لتهيئة مدرستك وبدء العمل في دقائق معدودة:
+              </p>
+              <p className={`text-xs font-black text-rose-600 rounded-lg px-3.5 py-2.5 mt-3 inline-block transition-all duration-1000 ease-in-out transform ${
+                temporaryGlow 
+                  ? "bg-rose-100 border-2 border-rose-500 ring-4 ring-rose-400/50 scale-108 rotate-1 shadow-md animate-bounce" 
+                  : "bg-rose-50/50 border border-rose-100 shadow-3xs animate-pulse"
+              }`}>
+                🚀 أنت على بعد خطوات للحصول على نظام متابعة ورصد الغياب بشكل مختلف
               </p>
             </div>
           </div>
@@ -2281,6 +2298,7 @@ export default function AdminPanel({
               />
               <button
                 type="button"
+                disabled={isSavingSchoolName}
                 onClick={async () => {
                   const inputEl = document.getElementById("school-settings-input") as HTMLInputElement;
                   if (inputEl) {
@@ -2294,9 +2312,18 @@ export default function AdminPanel({
                     }
                   }
                 }}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition cursor-pointer"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-55 flex items-center justify-center gap-1.5"
               >
-                تحديث الاسم ✨
+                {isSavingSchoolName ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>جاري الحفظ...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>تحديث الاسم ✨</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

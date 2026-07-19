@@ -58,6 +58,7 @@ export default function App() {
 
   // School Name States
   const [schoolName, setSchoolName] = useState<string>("");
+  const [isSavingSchoolName, setIsSavingSchoolName] = useState<boolean>(false);
   const [showSchoolModal, setShowSchoolModal] = useState<boolean>(false);
   const [schoolInput, setSchoolInput] = useState<string>("");
   const [modalError, setModalError] = useState<string>("");
@@ -136,8 +137,13 @@ export default function App() {
 
       if (name) {
         setSchoolName(name);
+        const user = auth.currentUser;
+        if (user && user.email) {
+          localStorage.setItem(`school_name_${user.email.toLowerCase()}`, name);
+        }
       } else {
         // Show customization dialog if no school name exists for this account
+        setSchoolName("");
         setShowSchoolModal(true);
       }
 
@@ -179,6 +185,14 @@ export default function App() {
       setCurrentUser(user);
       setAuthChecking(false);
       if (user) {
+        // Read cached school name from localStorage first to prevent loading screen flicker for returning users
+        const cached = localStorage.getItem(`school_name_${user.email?.toLowerCase()}`);
+        if (cached) {
+          setSchoolName(cached);
+        } else {
+          setSchoolName("");
+        }
+
         setLoading(true);
         try {
           // Direct dynamic load of user-specific data with no default/fallback automatic seeding
@@ -193,6 +207,7 @@ export default function App() {
         setClasses([]);
         setTeachers([]);
         setStudents([]);
+        setSchoolName("");
         setLoading(false);
       }
     });
@@ -224,11 +239,21 @@ export default function App() {
   };
 
   const handleSchoolNameChange = async (newName: string) => {
+    // 1. Optimistic Update (Instant feedback on the UI and cache)
+    setSchoolName(newName);
+    const user = auth.currentUser;
+    if (user && user.email) {
+      localStorage.setItem(`school_name_${user.email.toLowerCase()}`, newName);
+    }
+    
+    // 2. Trigger background save state
+    setIsSavingSchoolName(true);
     try {
       await saveSchoolName(newName);
-      setSchoolName(newName);
     } catch (err) {
       console.error("Error saving school name:", err);
+    } finally {
+      setIsSavingSchoolName(false);
     }
   };
 
@@ -248,18 +273,18 @@ export default function App() {
 
   // Update browser tab title and dynamic favicon icon based on active mode/tab
   useEffect(() => {
-    let title = schoolName ? `بوابة ${schoolName}` : "بوابة أم الحمام الثانوية الرقمية";
+    let title = schoolName ? `بوابة ${schoolName}` : "البوابة الرقمية للرصد والمتابعة";
     let emoji = "🏫";
     
     if (appMode === "stats-only") {
-      title = schoolName ? `متابعة الغياب والسلوك | ${schoolName}` : "متابعة الغياب والسلوك | بوابة أم الحمام";
+      title = schoolName ? `متابعة الغياب والسلوك | ${schoolName}` : "متابعة الغياب والسلوك | البوابة الرقمية";
       emoji = "📊";
     } else if (appMode === "teacher") {
       if (teacherTab === "attendance") {
-        title = `رصد الحضور والغياب | ${schoolName || "تسجيل الغياب للمعلمين"}`;
+        title = `رصد الحضور والغياب | ${schoolName || "البوابة الرقمية"}`;
         emoji = "📋";
       } else if (teacherTab === "behavior") {
-        title = `الرصد السلوكي للطلاب | ${schoolName || "تسجيل الغياب للمعلمين"}`;
+        title = `الرصد السلوكي للطلاب | ${schoolName || "البوابة الرقمية"}`;
         emoji = "⚠️";
       }
     } else if (appMode === "admin") {
@@ -290,7 +315,7 @@ export default function App() {
     } catch (e) {
       console.error("Error setting favicon:", e);
     }
-  }, [appMode, teacherTab, adminTab]);
+  }, [appMode, teacherTab, adminTab, schoolName]);
 
   const navigateTo = (mode: "teacher" | "admin" | "stats-only") => {
     const newPath = mode === "admin" ? "/admin" : mode === "stats-only" ? "/" : "/";
@@ -311,11 +336,46 @@ export default function App() {
   if (authChecking || loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100" dir="rtl">
-        <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-        <h3 className="text-lg font-bold">{schoolName ? `بوابة ${schoolName}` : "بوابة أم الحمام الثانوية الرقمية"}</h3>
-        <p className="text-xs text-slate-400 mt-2">
-          {authChecking ? "جاري التحقق من حالة تسجيل الدخول..." : "جاري تحميل سجلات المدرسة والبيانات الحية..."}
-        </p>
+        <div className="max-w-md w-full bg-slate-900/60 border border-slate-800/80 rounded-3xl p-8 space-y-6 shadow-2xl relative overflow-hidden animate-fadeIn">
+          {/* Decorative ambient glowing backdrops */}
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full -mr-12 -mt-12 blur-xl"></div>
+          <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full -ml-12 -mb-12 blur-xl"></div>
+          
+          <div className="relative flex flex-col items-center">
+            {schoolName ? (
+              <div className="mx-auto bg-gradient-to-tr from-blue-600 to-indigo-700 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-blue-950/50 w-fit mb-5 animate-bounce">
+                🏫
+              </div>
+            ) : (
+              <div className="mx-auto bg-gradient-to-tr from-rose-500 to-amber-500 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-amber-950/50 w-fit mb-5 animate-pulse">
+                ✨
+              </div>
+            )}
+            
+            <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+            
+            <h3 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400">
+              {schoolName ? `بوابة ${schoolName}` : "مرحباً بك في نظام رصد ومتابعة الغياب"}
+            </h3>
+            
+            <p className="text-xs text-slate-400 mt-2 font-medium leading-relaxed">
+              {authChecking 
+                ? "جاري التحقق من حالة تسجيل الدخول..." 
+                : schoolName 
+                  ? `أهلاً بك مجدداً! جاري تحميل سجلات ${schoolName} والبيانات الحية...`
+                  : "أهلاً بك! جاري تهيئة حسابك الجديد وتحميل النظام في دقائق معدودة..."
+              }
+            </p>
+            
+            {!schoolName && !authChecking && (
+              <div className="mt-4 p-3 bg-slate-950/50 border border-slate-800/80 rounded-xl max-w-sm">
+                <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
+                  أنت على بعد خطوات بسيطة للحصول على نظام متكامل وذكي لمتابعة ورصد الغياب والسلوك الخاص بمدرستك. يرجى الانتظار للحظات...
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -473,7 +533,7 @@ export default function App() {
     }
 
     return (
-      <div className="flex flex-col h-full justify-between p-5">
+      <div className="flex flex-col h-full justify-between p-5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
       <div className="space-y-6">
         {/* School Logo Shield */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-5">
@@ -518,18 +578,24 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <p className="text-3xs text-slate-300 font-extrabold max-w-[110px] truncate">{schoolName || "مدرسة أم الحمام الثانوية"}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSidebarSchoolInput(schoolName || "مدرسة أم الحمام الثانوية");
-                      setIsEditingSidebarSchool(true);
-                    }}
-                    className="text-red-400 hover:text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 p-1 rounded-md transition-all duration-150 cursor-pointer flex items-center justify-center shadow-sm"
-                    title="تعديل اسم المدرسة"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
+                  <p className="text-3xs text-slate-300 font-extrabold max-w-[110px] truncate">{schoolName || "لم يتم تسجيل اسم المدرسة"}</p>
+                  {isSavingSchoolName ? (
+                    <div className="p-1 bg-slate-900 border border-slate-800 rounded-md flex items-center justify-center shadow-xs" title="جاري الحفظ...">
+                      <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSidebarSchoolInput(schoolName || "");
+                        setIsEditingSidebarSchool(true);
+                      }}
+                      className="text-red-400 hover:text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 p-1 rounded-md transition-all duration-150 cursor-pointer flex items-center justify-center shadow-sm"
+                      title="تعديل اسم المدرسة"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -747,7 +813,7 @@ export default function App() {
         
         {/* Footer info: Make design smaller and copyright more clear */}
         <div className="text-center space-y-0.5 pt-1">
-          <p className="text-[10px] text-slate-300 font-extrabold tracking-wide">بوابة {schoolName || "أم الحمام"} الرقمية © {new Date().getFullYear()}</p>
+          <p className="text-[10px] text-slate-300 font-extrabold tracking-wide">{schoolName ? `بوابة ${schoolName} الرقمية` : "البوابة الرقمية للرصد والمتابعة"} © {new Date().getFullYear()}</p>
           <p className="text-[8px] text-slate-500 font-bold">البرمجة والتصميم: أ/ ماجد الناصر</p>
         </div>
       </div>
@@ -862,7 +928,7 @@ export default function App() {
                     }
                   </h2>
                   <h1 className="text-sm md:text-base font-black text-slate-800 flex items-center gap-1.5">
-                    <span>بوابة {schoolName || "أم الحمام"} الرقمية</span>
+                    <span>{schoolName ? `بوابة ${schoolName} الرقمية` : "البوابة الرقمية للرصد والمتابعة"}</span>
                     <span className={`hidden sm:inline px-2.5 py-0.5 rounded-full text-3xs font-extrabold border ${
                       appMode === "stats-only"
                         ? "bg-blue-50 text-blue-600 border-blue-100"
@@ -941,6 +1007,7 @@ export default function App() {
               onTodayStatsChange={setTodayCounts}
               schoolName={schoolName}
               onSchoolNameChange={handleSchoolNameChange}
+              isSavingSchoolName={isSavingSchoolName}
             />
           )}
         </main>
@@ -948,7 +1015,7 @@ export default function App() {
         {/* Styled Footer (Shown only on mobile view since desktop has sidebar credits) */}
         <footer className="lg:hidden bg-white border-t border-slate-100 py-4 text-center text-slate-400 text-3xs space-y-1">
           <p className="font-extrabold text-slate-500">البرمجة والتصميم: أ/ ماجد الناصر</p>
-          <p className="font-semibold text-slate-400">{schoolName || "مدرسة أم الحمام الثانوية"}</p>
+          <p className="font-semibold text-slate-400">{schoolName || "البوابة الرقمية للمدرسة"}</p>
         </footer>
       </div>
 
@@ -1015,6 +1082,10 @@ export default function App() {
                   try {
                     await saveSchoolName(trimmed);
                     setSchoolName(trimmed);
+                    const user = auth.currentUser;
+                    if (user && user.email) {
+                      localStorage.setItem(`school_name_${user.email.toLowerCase()}`, trimmed);
+                    }
                     setShowSchoolModal(false);
                   } catch (err) {
                     console.error("Error saving custom school name:", err);
@@ -1042,6 +1113,14 @@ export default function App() {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Persistent Elegant Floating Save Progress Indicator */}
+      {isSavingSchoolName && (
+        <div className="fixed bottom-6 left-6 z-50 bg-slate-900 border border-slate-800/80 text-slate-200 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce text-xs font-bold" dir="rtl">
+          <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+          <span className="tracking-wide">جاري مزامنة وحفظ الاسم الجديد سحابياً...</span>
         </div>
       )}
     </div>

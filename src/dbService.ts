@@ -539,8 +539,42 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
 const SETTINGS_COLL = "settings";
 
 export async function getSchoolName(): Promise<string> {
-  const settings = await fetchAndFilterCollection(SETTINGS_COLL);
-  return settings.length > 0 ? settings[0].schoolName || "" : "";
+  const user = auth.currentUser;
+  if (!user) return "";
+  const uid = user.uid;
+  const email = user.email?.toLowerCase() || "";
+  
+  try {
+    // 1. query by userId
+    const q1 = query(collection(db, SETTINGS_COLL), where("userId", "==", uid));
+    const s1 = await getDocs(q1);
+    if (!s1.empty) {
+      return s1.docs[0].data().schoolName || "";
+    }
+    
+    // 2. query by email
+    if (email) {
+      const q2 = query(collection(db, SETTINGS_COLL), where("userEmail", "==", email));
+      const s2 = await getDocs(q2);
+      if (!s2.empty) {
+        return s2.docs[0].data().schoolName || "";
+      }
+    }
+    
+    // 3. legacy global data fallback for majedsoft@gmail.com
+    if (email.includes("majedsoft")) {
+      for (const legacyUid of ["QgOSyBcP28MzmbJT92aH8vdgAG33", "D0GoJniRN0T4poH8RMgY9OjVJ5H3"]) {
+        const qLegacy = query(collection(db, SETTINGS_COLL), where("userId", "==", legacyUid));
+        const sLegacy = await getDocs(qLegacy);
+        if (!sLegacy.empty) {
+          return sLegacy.docs[0].data().schoolName || "";
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error getting school name:", err);
+  }
+  return "";
 }
 
 export async function saveSchoolName(schoolName: string): Promise<void> {
@@ -554,10 +588,11 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
       const docRef = doc(db, SETTINGS_COLL, querySnapshot.docs[0].id);
       await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
     } else {
-      // Also try fallback by email to avoid duplicating settings
-      const settings = await fetchAndFilterCollection(SETTINGS_COLL);
-      if (settings.length > 0) {
-        const docRef = doc(db, SETTINGS_COLL, settings[0].id);
+      // Direct query by email instead of fetchAndFilterCollection
+      const qEmail = query(collection(db, SETTINGS_COLL), where("userEmail", "==", email));
+      const emailSnapshot = await getDocs(qEmail);
+      if (!emailSnapshot.empty) {
+        const docRef = doc(db, SETTINGS_COLL, emailSnapshot.docs[0].id);
         await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
       } else {
         await addDoc(collection(db, SETTINGS_COLL), { schoolName, userId: uid, userEmail: email });
