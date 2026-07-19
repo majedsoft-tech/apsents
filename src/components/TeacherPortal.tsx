@@ -36,6 +36,7 @@ interface TeacherPortalProps {
   activeTab?: "attendance" | "behavior";
   setActiveTab?: (tab: "attendance" | "behavior") => void;
   navigateTo?: (mode: "teacher" | "admin") => void;
+  schoolName?: string;
 }
 
 const PERIODS = [
@@ -66,7 +67,7 @@ const getTodayDateString = () => {
   return `${year}-${month}-${day}`;
 };
 
-export default function TeacherPortal({ grades, classes, teachers, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo }: TeacherPortalProps) {
+export default function TeacherPortal({ grades, classes, teachers, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo, schoolName }: TeacherPortalProps) {
   // Filter Selection States
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [selectedGradeId, setSelectedGradeId] = useState<string>("");
@@ -394,7 +395,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
           </button>
         )}
 
-        <h1 className="text-2xl font-bold text-blue-900 mb-1">مدرسة أم الحمام الثانوية</h1>
+        <h1 className="text-2xl font-bold text-blue-900 mb-1">{schoolName || "مدرسة أم الحمام الثانوية"}</h1>
         <div className="flex items-center justify-center gap-1.5 text-slate-600 font-medium text-sm mb-2">
           <span>نظام تسجيل الغياب والسلوك</span>
           <span>📋</span>

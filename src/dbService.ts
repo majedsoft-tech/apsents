@@ -23,54 +23,78 @@ const STUDENTS_COLL = "students";
 const ATTENDANCE_COLL = "attendance";
 const BEHAVIORS_COLL = "behaviors";
 
+// Helper to fetch entire collection and filter client-side based on UID, email, and legacy fallbacks
+async function fetchAndFilterCollection(colName: string): Promise<any[]> {
+  const user = auth.currentUser;
+  if (!user) return [];
+  
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  try {
+    const querySnapshot = await getDocs(collection(db, colName));
+    const results: any[] = [];
+    
+    querySnapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      // 1. Direct match by UID
+      if (data.userId === currentUid) {
+        belongs = true;
+      }
+      // 2. Direct match by Email
+      else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      }
+      // 3. Fallbacks for majedsoft@gmail.com
+      else if (currentEmail.includes("majedsoft")) {
+        // If document has no userId and no userEmail (legacy global data)
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        }
+        // If document has known previous UIDs of majedsoft
+        else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs) {
+        results.push({ id: docSnap.id, ...data });
+      }
+    });
+
+    return results;
+  } catch (err) {
+    console.error(`Error fetching or filtering collection "${colName}":`, err);
+    return [];
+  }
+}
+
 // Fetch All Grades
 export async function getGrades(): Promise<Grade[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, GRADES_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grade));
+  return fetchAndFilterCollection(GRADES_COLL) as Promise<Grade[]>;
 }
 
 // Fetch All Classes
 export async function getClasses(): Promise<Class[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, CLASSES_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Class));
+  return fetchAndFilterCollection(CLASSES_COLL) as Promise<Class[]>;
 }
 
 // Fetch All Teachers
 export async function getTeachers(): Promise<Teacher[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, TEACHERS_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Teacher));
+  return fetchAndFilterCollection(TEACHERS_COLL) as Promise<Teacher[]>;
 }
 
 // Fetch All Students
 export async function getStudents(): Promise<Student[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, STUDENTS_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+  return fetchAndFilterCollection(STUDENTS_COLL) as Promise<Student[]>;
 }
 
 // Fetch Students by Grade and Class
 export async function getStudentsByClass(gradeId: string, classId: string): Promise<Student[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(
-    collection(db, STUDENTS_COLL),
-    where("userId", "==", uid),
-    where("gradeId", "==", gradeId),
-    where("classId", "==", classId)
-  );
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+  const students = await fetchAndFilterCollection(STUDENTS_COLL);
+  return students.filter(s => s.gradeId === gradeId && s.classId === classId) as Student[];
 }
 
 // Fetch Attendance Record for a specific date, period, grade, class
@@ -80,25 +104,15 @@ export async function getAttendanceRecord(
   gradeId: string,
   classId: string
 ): Promise<AttendanceRecord | null> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return null;
-  const q = query(
-    collection(db, ATTENDANCE_COLL),
-    where("userId", "==", uid),
-    where("date", "==", date),
-    where("period", "==", period),
-    where("gradeId", "==", gradeId),
-    where("classId", "==", classId)
-  );
-  const querySnapshot = await getDocs(q);
-  if (querySnapshot.empty) return null;
-  const docSnap = querySnapshot.docs[0];
-  return { id: docSnap.id, ...docSnap.data() } as AttendanceRecord;
+  const records = await fetchAndFilterCollection(ATTENDANCE_COLL);
+  const found = records.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId);
+  return found ? (found as AttendanceRecord) : null;
 }
 
 // Save Attendance Record
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
   
   // Check if a record already exists for this slot
@@ -109,6 +123,7 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     await setDoc(docRef, {
       ...record,
       userId: uid,
+      userEmail: email,
       timestamp: serverTimestamp()
     }, { merge: true });
   } else {
@@ -116,6 +131,7 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     await addDoc(collRef, {
       ...record,
       userId: uid,
+      userEmail: email,
       timestamp: serverTimestamp()
     });
   }
@@ -123,27 +139,21 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
 
 // Fetch Behavior Records for a student
 export async function getBehaviorRecords(studentId: string): Promise<BehaviorRecord[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(
-    collection(db, BEHAVIORS_COLL),
-    where("userId", "==", uid),
-    where("studentId", "==", studentId)
-  );
-  const querySnapshot = await getDocs(q);
-  const records = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BehaviorRecord));
-  // Sort on client side to avoid index creation requirements during first run
-  return records.sort((a, b) => b.date.localeCompare(a.date));
+  const records = await fetchAndFilterCollection(BEHAVIORS_COLL);
+  const filtered = records.filter(r => r.studentId === studentId) as BehaviorRecord[];
+  return filtered.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 // Save Behavior Record
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
   const collRef = collection(db, BEHAVIORS_COLL);
   const docRef = await addDoc(collRef, {
     ...record,
     userId: uid,
+    userEmail: email,
     timestamp: serverTimestamp()
   });
   return docRef.id;
@@ -159,10 +169,12 @@ export async function deleteBehaviorRecord(id: string): Promise<void> {
 // Add Grade
 export async function addGrade(name: string): Promise<string> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
   const docRef = await addDoc(collection(db, GRADES_COLL), { 
     name,
     userId: uid,
+    userEmail: email,
     createdAt: Date.now()
   });
   return docRef.id;
@@ -175,15 +187,15 @@ export async function deleteGrade(id: string): Promise<void> {
   const batch = writeBatch(db);
   batch.delete(doc(db, GRADES_COLL, id));
   
-  // Clean up associated classes
-  const classesQuery = query(collection(db, CLASSES_COLL), where("userId", "==", uid), where("gradeId", "==", id));
+  // Clean up associated classes (unique gradeId)
+  const classesQuery = query(collection(db, CLASSES_COLL), where("gradeId", "==", id));
   const classesSnap = await getDocs(classesQuery);
   classesSnap.docs.forEach(cDoc => {
     batch.delete(doc(db, CLASSES_COLL, cDoc.id));
   });
 
-  // Clean up associated students
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("userId", "==", uid), where("gradeId", "==", id));
+  // Clean up associated students (unique gradeId)
+  const studentsQuery = query(collection(db, STUDENTS_COLL), where("gradeId", "==", id));
   const studentsSnap = await getDocs(studentsQuery);
   studentsSnap.docs.forEach(sDoc => {
     batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
@@ -195,8 +207,14 @@ export async function deleteGrade(id: string): Promise<void> {
 // Add Class
 export async function addClass(name: string, gradeId: string): Promise<string> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
-  const docRef = await addDoc(collection(db, CLASSES_COLL), { name, gradeId, userId: uid });
+  const docRef = await addDoc(collection(db, CLASSES_COLL), { 
+    name, 
+    gradeId, 
+    userId: uid,
+    userEmail: email
+  });
   return docRef.id;
 }
 
@@ -207,8 +225,8 @@ export async function deleteClass(id: string): Promise<void> {
   const batch = writeBatch(db);
   batch.delete(doc(db, CLASSES_COLL, id));
   
-  // Clean up associated students of this class
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("userId", "==", uid), where("classId", "==", id));
+  // Clean up associated students of this class (unique classId)
+  const studentsQuery = query(collection(db, STUDENTS_COLL), where("classId", "==", id));
   const studentsSnap = await getDocs(studentsQuery);
   studentsSnap.docs.forEach(sDoc => {
     batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
@@ -220,19 +238,29 @@ export async function deleteClass(id: string): Promise<void> {
 // Add Teacher
 export async function addTeacher(name: string): Promise<string> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
-  const docRef = await addDoc(collection(db, TEACHERS_COLL), { name, userId: uid });
+  const docRef = await addDoc(collection(db, TEACHERS_COLL), { 
+    name, 
+    userId: uid,
+    userEmail: email
+  });
   return docRef.id;
 }
 
 // Add Multiple Teachers in a Batch
 export async function addTeachersBatch(names: string[]): Promise<void> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   names.forEach(name => {
     const docRef = doc(collection(db, TEACHERS_COLL));
-    batch.set(docRef, { name, userId: uid });
+    batch.set(docRef, { 
+      name, 
+      userId: uid,
+      userEmail: email
+    });
   });
   await batch.commit();
 }
@@ -254,19 +282,33 @@ export async function deleteTeachersBatch(ids: string[]): Promise<void> {
 // Add Student
 export async function addStudent(name: string, gradeId: string, classId: string): Promise<string> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
-  const docRef = await addDoc(collection(db, STUDENTS_COLL), { name, gradeId, classId, userId: uid });
+  const docRef = await addDoc(collection(db, STUDENTS_COLL), { 
+    name, 
+    gradeId, 
+    classId, 
+    userId: uid,
+    userEmail: email
+  });
   return docRef.id;
 }
 
 // Add Multiple Students in a Batch
 export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<void> {
   const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) throw new Error("Unauthenticated");
   const batch = writeBatch(db);
   studentsList.forEach(s => {
     const docRef = doc(collection(db, STUDENTS_COLL));
-    batch.set(docRef, { name: s.name, gradeId: s.gradeId, classId: s.classId, userId: uid });
+    batch.set(docRef, { 
+      name: s.name, 
+      gradeId: s.gradeId, 
+      classId: s.classId, 
+      userId: uid,
+      userEmail: email
+    });
   });
   await batch.commit();
 }
@@ -287,46 +329,84 @@ export async function deleteStudentsBatch(ids: string[]): Promise<void> {
 
 // Fetch all attendance for statistics
 export async function getAllAttendanceRecords(): Promise<AttendanceRecord[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, ATTENDANCE_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
+  return fetchAndFilterCollection(ATTENDANCE_COLL) as Promise<AttendanceRecord[]>;
 }
 
 // Subscribe to all attendance for real-time statistics
 export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRecord[]) => void, onError?: (error: any) => void) {
-  const uid = auth.currentUser?.uid;
-  if (!uid) {
+  const user = auth.currentUser;
+  if (!user) {
     callback([]);
     return () => {};
   }
-  const q = query(collection(db, ATTENDANCE_COLL), where("userId", "==", uid));
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, ATTENDANCE_COLL);
   return onSnapshot(q, (snapshot) => {
-    const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AttendanceRecord));
+    const records: AttendanceRecord[] = [];
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      if (data.userId === currentUid) {
+        belongs = true;
+      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      } else if (currentEmail.includes("majedsoft")) {
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs) {
+        records.push({ id: docSnap.id, ...data } as AttendanceRecord);
+      }
+    });
     callback(records);
   }, onError);
 }
 
 // Fetch all behavior records for statistics
 export async function getAllBehaviorRecords(): Promise<BehaviorRecord[]> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return [];
-  const q = query(collection(db, BEHAVIORS_COLL), where("userId", "==", uid));
-  const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BehaviorRecord));
+  return fetchAndFilterCollection(BEHAVIORS_COLL) as Promise<BehaviorRecord[]>;
 }
 
 // Subscribe to all behavior records for real-time statistics
 export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord[]) => void, onError?: (error: any) => void) {
-  const uid = auth.currentUser?.uid;
-  if (!uid) {
+  const user = auth.currentUser;
+  if (!user) {
     callback([]);
     return () => {};
   }
-  const q = query(collection(db, BEHAVIORS_COLL), where("userId", "==", uid));
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, BEHAVIORS_COLL);
   return onSnapshot(q, (snapshot) => {
-    const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BehaviorRecord));
+    const records: BehaviorRecord[] = [];
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      if (data.userId === currentUid) {
+        belongs = true;
+      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      } else if (currentEmail.includes("majedsoft")) {
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs) {
+        records.push({ id: docSnap.id, ...data } as BehaviorRecord);
+      }
+    });
     callback(records);
   }, onError);
 }
@@ -344,10 +424,9 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
 
   const uid = user.uid;
 
-  // Check if we already have grades in the database for this specific user
-  const gradesQuery = query(collection(db, GRADES_COLL), where("userId", "==", uid));
-  const gradesSnap = await getDocs(gradesQuery);
-  if (!gradesSnap.empty) {
+  // Use the new email/UID aware helper to check if grades already exist for this user
+  const grades = await getGrades();
+  if (grades.length > 0) {
     // Database already has data for this user
     return false;
   }
@@ -368,6 +447,7 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     batch.set(ref, {
       name: g.name,
       userId: uid,
+      userEmail: email,
       createdAt: Date.now()
     });
     gradeRefs.push({ name: g.name, ref, id: ref.id });
@@ -382,7 +462,8 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
       batch.set(ref, {
         name: cName,
         gradeId: g.id,
-        userId: uid
+        userId: uid,
+        userEmail: email
       });
       classRefs.push({ name: cName, gradeId: g.id, ref, id: ref.id });
     });
@@ -400,7 +481,8 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     const ref = doc(collection(db, TEACHERS_COLL));
     batch.set(ref, {
       name: tName,
-      userId: uid
+      userId: uid,
+      userEmail: email
     });
   });
 
@@ -419,7 +501,7 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     "أحمد بن عبد العزيز اليوسف",
     "خالد بن محمد السديري",
     "فهد بن سليمان الدوسري",
-    "سلطان بن فهد العتيبي",
+    "sلطان بن فهد العتيبي",
     "يوسف بن عبد الله الخالدي",
     "مشعل بن عبد العزيز السبيعي",
     "تركي بن فهد الحارثي",
@@ -443,7 +525,8 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
         name: sName,
         gradeId: cls.gradeId,
         classId: cls.id,
-        userId: uid
+        userId: uid,
+        userEmail: email
       });
     }
   });
@@ -451,3 +534,37 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
   await batch.commit();
   return true;
 }
+
+// --- SCHOOL SETTINGS ---
+const SETTINGS_COLL = "settings";
+
+export async function getSchoolName(): Promise<string> {
+  const settings = await fetchAndFilterCollection(SETTINGS_COLL);
+  return settings.length > 0 ? settings[0].schoolName || "" : "";
+}
+
+export async function saveSchoolName(schoolName: string): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  const email = auth.currentUser?.email?.toLowerCase() || "";
+  if (!uid) return;
+  try {
+    const q = query(collection(db, SETTINGS_COLL), where("userId", "==", uid));
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      const docRef = doc(db, SETTINGS_COLL, querySnapshot.docs[0].id);
+      await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
+    } else {
+      // Also try fallback by email to avoid duplicating settings
+      const settings = await fetchAndFilterCollection(SETTINGS_COLL);
+      if (settings.length > 0) {
+        const docRef = doc(db, SETTINGS_COLL, settings[0].id);
+        await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
+      } else {
+        await addDoc(collection(db, SETTINGS_COLL), { schoolName, userId: uid, userEmail: email });
+      }
+    }
+  } catch (err) {
+    console.error("Error saving school name:", err);
+  }
+}
+

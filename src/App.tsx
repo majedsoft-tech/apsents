@@ -4,7 +4,9 @@ import {
   getClasses, 
   getTeachers, 
   getStudents, 
-  seedDatabaseIfEmpty 
+  seedDatabaseIfEmpty,
+  getSchoolName,
+  saveSchoolName
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -31,7 +33,8 @@ import {
   Copy,
   Check,
   ExternalLink,
-  LogOut
+  LogOut,
+  Edit2
 } from "lucide-react";
 
 function getInitialMode(): "teacher" | "admin" | "stats-only" {
@@ -52,6 +55,17 @@ export default function App() {
   // Authentication States
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
+
+  // School Name States
+  const [schoolName, setSchoolName] = useState<string>("");
+  const [showSchoolModal, setShowSchoolModal] = useState<boolean>(false);
+  const [schoolInput, setSchoolInput] = useState<string>("");
+  const [modalError, setModalError] = useState<string>("");
+  const [modalSaving, setModalSaving] = useState<boolean>(false);
+
+  // Sidebar Inline School Name Edit States
+  const [isEditingSidebarSchool, setIsEditingSidebarSchool] = useState<boolean>(false);
+  const [sidebarSchoolInput, setSidebarSchoolInput] = useState<string>("");
 
   // Database States
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -80,11 +94,8 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [todayCounts, setTodayCounts] = useState<{ absentCount: number; behaviorCount: number }>({ absentCount: 0, behaviorCount: 0 });
 
-  // Desktop sidebar control states (hide/show & pin/unpin)
-  const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(() => {
-    const saved = localStorage.getItem("sidebar_pinned");
-    return saved !== "false";
-  });
+  // Desktop sidebar control states (hide/show & pin/unpin) - Pinning is always enabled
+  const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
     const saved = localStorage.getItem("sidebar_open");
     return saved !== "false";
@@ -115,12 +126,20 @@ export default function App() {
   // Load all database entities in parallel to optimize speed and responsiveness
   const loadDatabaseData = async () => {
     try {
-      const [g, c, t, s] = await Promise.all([
+      const [g, c, t, s, name] = await Promise.all([
         getGrades(),
         getClasses(),
         getTeachers(),
-        getStudents()
+        getStudents(),
+        getSchoolName()
       ]);
+
+      if (name) {
+        setSchoolName(name);
+      } else {
+        // Show customization dialog if no school name exists for this account
+        setShowSchoolModal(true);
+      }
 
       // Sort grades: oldest first (ascending by createdAt) so newly added grades appear after existing ones
       const sortedGrades = [...g].sort((a, b) => {
@@ -204,6 +223,15 @@ export default function App() {
     });
   };
 
+  const handleSchoolNameChange = async (newName: string) => {
+    try {
+      await saveSchoolName(newName);
+      setSchoolName(newName);
+    } catch (err) {
+      console.error("Error saving school name:", err);
+    }
+  };
+
   // Synchronize app mode with URL routing
   useEffect(() => {
     const handleUrlChange = () => {
@@ -220,29 +248,29 @@ export default function App() {
 
   // Update browser tab title and dynamic favicon icon based on active mode/tab
   useEffect(() => {
-    let title = "بوابة أم الحمام الثانوية الرقمية";
+    let title = schoolName ? `بوابة ${schoolName}` : "بوابة أم الحمام الثانوية الرقمية";
     let emoji = "🏫";
     
     if (appMode === "stats-only") {
-      title = "الإحصائيات العامة | بوابة أم الحمام";
+      title = schoolName ? `متابعة الغياب والسلوك | ${schoolName}` : "متابعة الغياب والسلوك | بوابة أم الحمام";
       emoji = "📊";
     } else if (appMode === "teacher") {
       if (teacherTab === "attendance") {
-        title = "رصد الحضور والغياب | بوابة تسجيل الغياب";
+        title = `رصد الحضور والغياب | ${schoolName || "تسجيل الغياب للمعلمين"}`;
         emoji = "📋";
       } else if (teacherTab === "behavior") {
-        title = "الرصد السلوكي للطلاب | بوابة تسجيل الغياب";
+        title = `الرصد السلوكي للطلاب | ${schoolName || "تسجيل الغياب للمعلمين"}`;
         emoji = "⚠️";
       }
     } else if (appMode === "admin") {
       if (adminTab === "stats") {
-        title = "الإحصائيات والتقارير | لوحة التحكم";
+        title = "متابعة الغياب والسلوك | لوحة التحكم";
         emoji = "📊";
       } else if (adminTab === "students") {
-        title = "إدارة الطلاب والفصول | لوحة التحكم";
+        title = "إضافة الطلاب والفصول | لوحة التحكم";
         emoji = "👥";
       } else if (adminTab === "teachers") {
-        title = "إدارة المعلمين | لوحة التحكم";
+        title = "إضافة المعلمين | لوحة التحكم";
         emoji = "💼";
       }
     }
@@ -284,7 +312,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100" dir="rtl">
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-        <h3 className="text-lg font-bold">بوابة أم الحمام الثانوية الرقمية</h3>
+        <h3 className="text-lg font-bold">{schoolName ? `بوابة ${schoolName}` : "بوابة أم الحمام الثانوية الرقمية"}</h3>
         <p className="text-xs text-slate-400 mt-2">
           {authChecking ? "جاري التحقق من حالة تسجيل الدخول..." : "جاري تحميل سجلات المدرسة والبيانات الحية..."}
         </p>
@@ -302,7 +330,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">SmartTeacher</h1>
-            <p className="text-xs text-slate-400 mt-2 font-bold">المنصة الموحدة لإدارة ورصد غياب الطلاب وسلوكهم</p>
+            <p className="text-xs text-slate-400 mt-2 font-bold">منصة رصد ومتابعة الغياب والسلوك للطلاب بطريقة مبتكرة</p>
           </div>
 
           {/* 3-point description of the application */}
@@ -354,7 +382,7 @@ export default function App() {
   // Sidebar Menu Items Definition
   const menuGroups = [
     {
-      title: "بوابة تسجيل الغياب ورصد الحصص",
+      title: "تسجيل الغياب للمعلمين",
       icon: <ClipboardCheck className="w-4 h-4 text-blue-400" />,
       items: [
         {
@@ -379,21 +407,21 @@ export default function App() {
       items: [
         {
           id: "stats",
-          label: "الإحصائيات والتقارير",
+          label: "متابعة الغياب والسلوك",
           icon: <BarChart3 className="w-4 h-4" />,
           mode: "admin" as const,
           tab: "stats" as const
         },
         {
           id: "students",
-          label: "إدارة الطلاب والفصول",
+          label: "إضافة الطلاب والفصول",
           icon: <Users className="w-4 h-4" />,
           mode: "admin" as const,
           tab: "students" as const
         },
         {
           id: "teachers",
-          label: "إدارة المعلمين",
+          label: "إضافة المعلمين",
           icon: <Briefcase className="w-4 h-4" />,
           mode: "admin" as const,
           tab: "teachers" as const
@@ -419,8 +447,33 @@ export default function App() {
   };
 
   // Reusable Sidebar Content JSX
-  const renderSidebarContent = () => (
-    <div className="flex flex-col h-full justify-between p-5">
+  const renderSidebarContent = () => {
+    // Dynamic Onboarding Step Calculation for Sidebar Highlighting
+    let onboardingStep = 1;
+    if (grades.length === 0 || classes.length === 0) {
+      if (appMode !== "admin" || adminTab !== "students") {
+        onboardingStep = 1;
+      } else {
+        onboardingStep = 2;
+      }
+    } else if (students.length === 0) {
+      if (appMode !== "admin" || adminTab !== "students") {
+        onboardingStep = 1;
+      } else {
+        onboardingStep = 6;
+      }
+    } else if (teachers.length === 0) {
+      if (appMode !== "admin" || adminTab !== "teachers") {
+        onboardingStep = 7;
+      } else {
+        onboardingStep = 7.5;
+      }
+    } else {
+      onboardingStep = 8;
+    }
+
+    return (
+      <div className="flex flex-col h-full justify-between p-5">
       <div className="space-y-6">
         {/* School Logo Shield */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-5">
@@ -429,26 +482,61 @@ export default function App() {
               🏫
             </div>
             <div>
-              <h1 className="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300 tracking-wide">SmartTeacher</h1>
-              <p className="text-3xs text-slate-400 font-bold mt-0.5">مدرسة أم الحمام الثانوية</p>
+              <h1 className="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300 tracking-wide">SmartSchool</h1>
+              {isEditingSidebarSchool ? (
+                <div className="flex items-center gap-1 mt-1">
+                  <input
+                    type="text"
+                    value={sidebarSchoolInput}
+                    onChange={(e) => setSidebarSchoolInput(e.target.value)}
+                    className="text-[10px] font-bold px-2 py-0.5 bg-slate-950 border border-slate-700 focus:border-blue-500 rounded text-right text-slate-100 max-w-[110px] outline-none"
+                    placeholder="اسم المدرسة"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const trimmed = sidebarSchoolInput.trim();
+                      if (trimmed) {
+                        await handleSchoolNameChange(trimmed);
+                      }
+                      setIsEditingSidebarSchool(false);
+                    }}
+                    className="p-1 text-emerald-400 hover:text-emerald-300 bg-slate-950 hover:bg-slate-800 rounded border border-slate-850 cursor-pointer"
+                    title="حفظ"
+                  >
+                    <Check className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingSidebarSchool(false)}
+                    className="p-1 text-rose-400 hover:text-rose-300 bg-slate-950 hover:bg-slate-800 rounded border border-slate-850 cursor-pointer"
+                    title="إلغاء"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <p className="text-3xs text-slate-300 font-extrabold max-w-[110px] truncate">{schoolName || "مدرسة أم الحمام الثانوية"}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSidebarSchoolInput(schoolName || "مدرسة أم الحمام الثانوية");
+                      setIsEditingSidebarSchool(true);
+                    }}
+                    className="text-red-400 hover:text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 p-1 rounded-md transition-all duration-150 cursor-pointer flex items-center justify-center shadow-sm"
+                    title="تعديل اسم المدرسة"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Controls for Desktop pinning/hiding */}
+          {/* Controls for Desktop hiding (Pinning is always on) */}
           <div className="hidden lg:flex items-center gap-1.5">
-            {/* Pin Toggle */}
-            <button
-              type="button"
-              onClick={() => setIsSidebarPinned(!isSidebarPinned)}
-              title={isSidebarPinned ? "إلغاء التثبيت (جعل القائمة عائمة)" : "تثبيت القائمة جانباً"}
-              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
-                isSidebarPinned 
-                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/30" 
-                  : "text-slate-400 hover:bg-slate-800 hover:text-white border border-transparent"
-              }`}
-            >
-              {isSidebarPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
-            </button>
             {/* Close Button */}
             <button
               type="button"
@@ -459,6 +547,13 @@ export default function App() {
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
+        </div>
+
+        {/* Site Subtitle / Description */}
+        <div id="sidebar-site-subtitle" className="bg-slate-950/40 border border-slate-800/80 rounded-xl py-2.5 px-3.5 text-center -mt-2.5 shadow-3xs">
+          <p className="text-2xs font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">
+            رصد ومتابعة الغياب
+          </p>
         </div>
 
         {/* Dynamic Groups & Items */}
@@ -491,15 +586,24 @@ export default function App() {
                           )}
                           <button
                             onClick={() => handleMenuItemClick(item.mode, item.tab)}
-                            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] ${
+                            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
                               active
                                 ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
                                 : "text-slate-200 hover:bg-slate-800 hover:text-white"
+                            } ${
+                              (item.id === "students" && onboardingStep === 1) || (item.id === "teachers" && onboardingStep === 7)
+                                ? "ring-2 ring-amber-400 bg-slate-800 text-amber-300 animate-pulse font-extrabold"
+                                : ""
                             }`}
                           >
                             <div className="flex items-center gap-2">
                               <span className={active ? "text-white" : "text-slate-300"}>{item.icon}</span>
                               <span>{item.label}</span>
+                              {((item.id === "students" && onboardingStep === 1) || (item.id === "teachers" && onboardingStep === 7)) && (
+                                <span className="bg-amber-400 text-slate-900 text-[8px] px-1.5 py-0.5 rounded-md font-black animate-bounce">
+                                  البدء هنا 👈
+                                </span>
+                              )}
                             </div>
                             
                             {active && (
@@ -513,11 +617,11 @@ export default function App() {
                                 type="button"
                                 onClick={handleCopyStatsLink}
                                 className="w-full flex items-center justify-between gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-extrabold bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer"
-                                title="نسخ رابط صفحة الإحصائيات لمشاركتها مباشرة"
+                                title="نسخ رابط صفحة متابعة الغياب والسلوك لمشاركتها مباشرة"
                               >
                                 <div className="flex items-center gap-1.5">
                                   <Copy className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                                  <span>نسخ رابط الإحصائيات</span>
+                                  <span>نسخ الرابط للمسؤول</span>
                                 </div>
                                 {copied ? (
                                   <span className="text-emerald-400 flex items-center gap-0.5 text-[9px] font-black">
@@ -547,7 +651,7 @@ export default function App() {
                               >
                                 <div className="flex items-center gap-2">
                                   <span className={appMode === "teacher" ? "text-white" : "text-purple-400"}><ClipboardCheck className="w-4 h-4" /></span>
-                                  <span>بوابة تسجيل الغياب</span>
+                                  <span>بوابة تسجيل الغياب والسلوك</span>
                                 </div>
                                 {appMode === "teacher" && (
                                   <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
@@ -559,11 +663,11 @@ export default function App() {
                                   type="button"
                                   onClick={handleCopyTeacherLink}
                                   className="w-full flex items-center justify-between gap-1 text-[10px] text-purple-400 hover:text-purple-300 font-extrabold bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/20 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer"
-                                  title="نسخ رابط بوابة تسجيل الغياب لمشاركته مباشرة"
+                                  title="نسخ رابط تسجيل الغياب للمعلمين لمشاركته مباشرة"
                                 >
                                   <div className="flex items-center gap-1.5">
                                     <Copy className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-                                    <span>نسخ رابط بوابة تسجيل الغياب</span>
+                                    <span>نسخ الرابط للمعلمين</span>
                                   </div>
                                   {teacherCopied ? (
                                     <span className="text-emerald-400 flex items-center gap-0.5 text-[9px] font-black">
@@ -591,42 +695,46 @@ export default function App() {
 
       {/* Sidebar Footer Info */}
       <div className="border-t border-slate-800/80 pt-4 mt-auto space-y-3 px-1">
-        {/* User Profile Card like the attached image */}
-        <div className="bg-slate-950/45 border border-slate-800/60 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-inner">
-          {/* Right side: Avatar (first element in RTL) */}
-          <div className="w-10 h-10 rounded-full border border-blue-500 bg-white flex items-center justify-center text-blue-600 font-extrabold text-sm flex-shrink-0 shadow-3xs">
-            {(currentUser?.displayName || currentUser?.email || "M").charAt(0).toUpperCase()}
+        {/* Combined User Profile and Logout Container (Single Group) */}
+        <div className="bg-slate-950/45 border border-slate-800/60 rounded-2xl p-3 space-y-3.5 shadow-inner">
+          {/* User Profile Info */}
+          <div className="flex items-center gap-3">
+            {/* Right side: Avatar (first element in RTL) */}
+            <div className="w-10 h-10 rounded-full border border-blue-500 bg-white flex items-center justify-center text-blue-600 font-extrabold text-sm flex-shrink-0 shadow-3xs">
+              {(currentUser?.displayName || currentUser?.email || "M").charAt(0).toUpperCase()}
+            </div>
+
+            {/* Left side: Text details (second element in RTL) */}
+            <div className="flex-1 min-w-0 text-right pr-0.5">
+              <p className="text-xs font-black text-slate-100 tracking-tight truncate">
+                {currentUser?.displayName || "Majed Alnaser"}
+              </p>
+              <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5" dir="ltr">
+                {currentUser?.email || "majedsoft@gmail.com"}
+              </p>
+            </div>
           </div>
 
-          {/* Left side: Text details (second element in RTL) */}
-          <div className="flex-1 min-w-0 text-right pr-0.5">
-            <p className="text-xs font-black text-slate-100 tracking-tight truncate">
-              {currentUser?.displayName || "Majed Alnaser"}
-            </p>
-            <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5" dir="ltr">
-              {currentUser?.email || "majedsoft@gmail.com"}
-            </p>
-          </div>
+          {/* Horizontal separator matching the theme */}
+          <div className="border-t border-slate-800/50"></div>
+
+          {/* Logout Button - Aligned from right to left (RTL Arabic) with a premium themed background */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await signOut(auth);
+              } catch (err) {
+                console.error("Logout Error:", err);
+              }
+            }}
+            className="w-full flex items-center justify-start gap-2.5 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/30 text-rose-400 hover:text-rose-300 rounded-xl transition-all duration-200 cursor-pointer"
+          >
+            {/* Icon on the right (first child in RTL), text on the left */}
+            <LogOut className="w-4 h-4 flex-shrink-0" />
+            <span className="font-extrabold text-[11px]">تسجيل الخروج</span>
+          </button>
         </div>
-
-        {/* Logout Button placed nicely at the bottom of the right sidebar, matching the image */}
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              await signOut(auth);
-            } catch (err) {
-              console.error("Logout Error:", err);
-            }
-          }}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200/40 shadow-xs hover:shadow text-rose-600 hover:text-rose-700 rounded-2xl transition-all duration-200 cursor-pointer mt-1"
-        >
-          {/* Right side: Red sign-out icon in RTL (first child) */}
-          <span className="text-red-500 flex-shrink-0"><LogOut className="w-4 h-4" /></span>
-
-          {/* Left side: Red label (second child) */}
-          <span className="font-extrabold text-[11px] text-red-600">تسجيل الخروج</span>
-        </button>
 
         {appMode === "teacher" && (
           <button
@@ -639,12 +747,13 @@ export default function App() {
         
         {/* Footer info: Make design smaller and copyright more clear */}
         <div className="text-center space-y-0.5 pt-1">
-          <p className="text-[10px] text-slate-300 font-extrabold tracking-wide">بوابة أم الحمام الرقمية © {new Date().getFullYear()}</p>
+          <p className="text-[10px] text-slate-300 font-extrabold tracking-wide">بوابة {schoolName || "أم الحمام"} الرقمية © {new Date().getFullYear()}</p>
           <p className="text-[8px] text-slate-500 font-bold">البرمجة والتصميم: أ/ ماجد الناصر</p>
         </div>
       </div>
     </div>
   );
+  };
 
   const showSidebar = appMode === "admin" || (appMode === "teacher" && !isDirectTeacherLink);
   const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
@@ -753,7 +862,7 @@ export default function App() {
                     }
                   </h2>
                   <h1 className="text-sm md:text-base font-black text-slate-800 flex items-center gap-1.5">
-                    <span>بوابة أم الحمام الرقمية</span>
+                    <span>بوابة {schoolName || "أم الحمام"} الرقمية</span>
                     <span className={`hidden sm:inline px-2.5 py-0.5 rounded-full text-3xs font-extrabold border ${
                       appMode === "stats-only"
                         ? "bg-blue-50 text-blue-600 border-blue-100"
@@ -813,6 +922,7 @@ export default function App() {
               activeTab={teacherTab}
               setActiveTab={setTeacherTab}
               navigateTo={navigateTo}
+              schoolName={schoolName}
             />
           ) : (
             <AdminPanel 
@@ -829,6 +939,8 @@ export default function App() {
               setActiveSubTab={setAdminTab}
               isReadOnly={appMode === "stats-only"}
               onTodayStatsChange={setTodayCounts}
+              schoolName={schoolName}
+              onSchoolNameChange={handleSchoolNameChange}
             />
           )}
         </main>
@@ -836,9 +948,102 @@ export default function App() {
         {/* Styled Footer (Shown only on mobile view since desktop has sidebar credits) */}
         <footer className="lg:hidden bg-white border-t border-slate-100 py-4 text-center text-slate-400 text-3xs space-y-1">
           <p className="font-extrabold text-slate-500">البرمجة والتصميم: أ/ ماجد الناصر</p>
-          <p className="font-semibold text-slate-400">مدرسة أم الحمام الثانوية</p>
+          <p className="font-semibold text-slate-400">{schoolName || "مدرسة أم الحمام الثانوية"}</p>
         </footer>
       </div>
+
+      {/* 4. DYNAMIC SCHOOL CUSTOMIZATION MODAL (ASKED ON FIRST EMAIL SIGN-IN) */}
+      {showSchoolModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn" dir="rtl">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 text-right shadow-2xl relative overflow-hidden space-y-5">
+            {/* Elegant Background Accents */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full -mr-12 -mt-12 opacity-60"></div>
+            <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-50 rounded-full -ml-12 -mb-12 opacity-60"></div>
+            
+            <div className="relative space-y-4">
+              {/* Header Icon */}
+              <div className="mx-auto bg-gradient-to-tr from-blue-600 to-indigo-700 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-blue-500/20 w-fit">
+                🏫
+              </div>
+              
+              {/* Text content */}
+              <div className="text-center space-y-1.5">
+                <h3 className="text-base font-black text-slate-800">تخصيص النسخة لمدرستك ⚙️</h3>
+                <p className="text-3xs text-slate-500 font-bold leading-relaxed px-2">
+                  مرحباً بك في منصة <strong className="text-blue-600">SmartTeacher</strong> الرقمية! يرجى إدخال اسم مدرستك أو المجمع التعليمي الخاص بك لتخصيص كامل واجهات المنصة، تلوين الهوية، وتوليد التقارير والإحصائيات الحية باسم مدرستك فوراً.
+                </p>
+              </div>
+
+              {/* Form Input */}
+              <div className="space-y-1.5 text-right">
+                <label className="block text-3xs font-black text-slate-400 uppercase tracking-wide">
+                  اسم المدرسة أو المنشأة التعليمية:
+                </label>
+                <input
+                  type="text"
+                  value={schoolInput}
+                  onChange={(e) => {
+                    setSchoolInput(e.target.value);
+                    if (modalError) setModalError("");
+                  }}
+                  placeholder="مثال: مدرسة أم الحمام الثانوية"
+                  className="w-full text-xs font-bold px-4 py-3.5 border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 rounded-xl outline-none transition text-right bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
+                />
+                {modalError && (
+                  <p className="text-[10px] text-rose-500 font-black flex items-center gap-1 mt-1">
+                    <span>⚠️</span>
+                    <span>{modalError}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Action Button */}
+              <button
+                type="button"
+                disabled={modalSaving}
+                onClick={async () => {
+                  const trimmed = schoolInput.trim();
+                  if (!trimmed) {
+                    setModalError("يرجى كتابة اسم المدرسة للمتابعة وتخصيص نسختك.");
+                    return;
+                  }
+                  if (trimmed.length < 3) {
+                    setModalError("اسم المدرسة يجب أن يتكون من ٣ أحرف على الأقل.");
+                    return;
+                  }
+                  setModalSaving(true);
+                  try {
+                    await saveSchoolName(trimmed);
+                    setSchoolName(trimmed);
+                    setShowSchoolModal(false);
+                  } catch (err) {
+                    console.error("Error saving custom school name:", err);
+                    setModalError("حدث خطأ أثناء حفظ الاسم، يرجى المحاولة مرة أخرى.");
+                  } finally {
+                    setModalSaving(false);
+                  }
+                }}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-blue-500/10 transition-all active:scale-99 hover:scale-[1.01] cursor-pointer disabled:opacity-50"
+              >
+                {modalSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>جاري تخصيص وحفظ الهوية...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>حفظ وتخصيص المنصة بالكامل ✨</span>
+                  </>
+                )}
+              </button>
+              
+              <p className="text-[9px] text-slate-400 font-medium text-center">
+                يمكنك تعديل اسم المدرسة في أي وقت لاحقاً من خلال تهيئة الإعدادات
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

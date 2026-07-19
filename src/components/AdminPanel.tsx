@@ -57,6 +57,8 @@ interface AdminPanelProps {
   setActiveSubTab?: (tab: "stats" | "grades" | "teachers" | "students") => void;
   isReadOnly?: boolean;
   onTodayStatsChange?: (stats: { absentCount: number; behaviorCount: number }) => void;
+  schoolName?: string;
+  onSchoolNameChange?: (name: string) => void;
 }
 
 const getTodayDateString = () => {
@@ -169,7 +171,9 @@ export default function AdminPanel({
   activeSubTab: propActiveSubTab,
   setActiveSubTab: propSetActiveSubTab,
   isReadOnly = false,
-  onTodayStatsChange
+  onTodayStatsChange,
+  schoolName,
+  onSchoolNameChange
 }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
   const [pin, setPin] = useState<string>("");
@@ -233,6 +237,11 @@ export default function AdminPanel({
     } catch {
       return {};
     }
+  });
+
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    const saved = localStorage.getItem("onboarding_guide_visible");
+    return saved !== "false";
   });
 
   useEffect(() => {
@@ -356,6 +365,14 @@ export default function AdminPanel({
   const [studentAddMode, setStudentAddMode] = useState<"individual" | "excel">("individual");
   const [teacherAddMode, setTeacherAddMode] = useState<"individual" | "excel">("individual");
   const [gradesAddMode, setGradesAddMode] = useState<"individual" | "excel">("individual");
+
+  const [hasClickedStudentSwitcher, setHasClickedStudentSwitcher] = useState<boolean>(false);
+  const [hasClickedTeacherSwitcher, setHasClickedTeacherSwitcher] = useState<boolean>(false);
+
+  useEffect(() => {
+    setHasClickedStudentSwitcher(false);
+    setHasClickedTeacherSwitcher(false);
+  }, [activeSubTab]);
 
   // Copy and Paste text state
   const [pastedStudentsText, setPastedStudentsText] = useState<string>("");
@@ -1567,6 +1584,34 @@ export default function AdminPanel({
     );
   }
 
+  // Dynamic Onboarding Step Calculation
+  let currentStep = 1;
+  if (grades.length === 0 || classes.length === 0) {
+    if (activeSubTab !== "students") {
+      currentStep = 1;
+    } else if (!showStructureManager) {
+      currentStep = 2;
+    } else if (grades.length === 0) {
+      currentStep = 3;
+    } else {
+      currentStep = 4;
+    }
+  } else if (students.length === 0) {
+    if (activeSubTab !== "students") {
+      currentStep = 1;
+    } else {
+      currentStep = 6;
+    }
+  } else if (teachers.length === 0) {
+    if (activeSubTab !== "teachers") {
+      currentStep = 7;
+    } else {
+      currentStep = 7.5;
+    }
+  } else {
+    currentStep = 8; // Completed all steps!
+  }
+
   // --- MAIN ADMIN SYSTEM DISPLAY (WIDE RESPONSIVE SCREEN) ---
   return (
     <div id="admin-main-panel" className="w-full space-y-6 pb-12">
@@ -1582,6 +1627,8 @@ export default function AdminPanel({
         </div>
       )}
 
+
+
       {/* Welcome & Empty State Info Interactive Banner */}
       {grades.length === 0 && students.length === 0 && teachers.length === 0 && (
         <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50/50 border border-blue-100 rounded-2xl p-6 text-right space-y-5 shadow-3xs print:hidden animate-fadeIn" dir="rtl">
@@ -1592,77 +1639,6 @@ export default function AdminPanel({
               <p className="text-3xs text-slate-500 font-bold mt-1 leading-relaxed">
                 لقد قمت بتسجيل الدخول بنجاح. قاعدة بياناتك الحالية فارغة تماماً ومستقلة لتضمن خصوصية تامة لسجلاتك. اتبع الخطوات التفاعلية أدناه لتهيئة مدرستك وبدء العمل في دقائق معدودة:
               </p>
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-blue-100/40">
-            <h4 className="text-3xs font-black text-slate-400 mb-3 uppercase tracking-wider">الخطوات السريعة لتشغيل مدرستك (اضغط على الخطوة للانتقال والبدء فوراً):</h4>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              
-              {/* Step 1: Grades & Classes */}
-              <button
-                type="button"
-                onClick={() => setActiveSubTab("grades")}
-                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-white/80 hover:bg-white border border-blue-100 hover:border-blue-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-blue-600 bg-blue-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-blue-100 transition">١</span>
-                    <span className="text-xs font-black text-slate-800">الصفوف والفصول</span>
-                  </div>
-                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
-                    ابدأ بتحديد الصفوف والمراحل الدراسية والفصول الدراسية وتعديلها لتناسب خطتك وهيكلك الأكاديمي.
-                  </p>
-                </div>
-                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-blue-600 border-t border-blue-50/50 pt-2 group-hover:text-blue-700">
-                  <span>انتقال سريع للتهيئة ⚙️</span>
-                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
-                </div>
-              </button>
-
-              {/* Step 2: Teachers */}
-              <button
-                type="button"
-                onClick={() => setActiveSubTab("teachers")}
-                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-white/80 hover:bg-white border border-indigo-100 hover:border-indigo-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-indigo-600 bg-indigo-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-indigo-100 transition">٢</span>
-                    <span className="text-xs font-black text-slate-800">كادر المعلمين</span>
-                  </div>
-                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
-                    سجل المعلمين والمعلمات لتوزيع الفصول وتعيين الشعب والأنصبة الدراسية للتحضير الفوري بسهولة وسرعة.
-                  </p>
-                </div>
-                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-indigo-600 border-t border-indigo-50/50 pt-2 group-hover:text-indigo-700">
-                  <span>تسجيل المعلمين الآن 👤</span>
-                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
-                </div>
-              </button>
-
-              {/* Step 3: Students & Import */}
-              <button
-                type="button"
-                onClick={() => setActiveSubTab("students")}
-                className="group flex flex-col justify-between text-right p-4 rounded-xl bg-gradient-to-br from-emerald-50/10 to-white hover:from-emerald-50/30 hover:to-white border border-emerald-100 hover:border-emerald-300 hover:shadow-xs active:scale-98 transition-all duration-200 cursor-pointer"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-emerald-600 bg-emerald-50 w-6 h-6 rounded-lg flex items-center justify-center group-hover:bg-emerald-100 transition">٣</span>
-                    <span className="text-xs font-black text-slate-800">قوائم الطلاب والاستيراد</span>
-                  </div>
-                  <p className="text-3xs text-slate-500 font-semibold leading-relaxed">
-                    أضف الطلاب أو استفد من ميزة <strong className="text-emerald-700 font-black">الاستيراد الذكي من ملف Excel أو نظام نور</strong> لرفع الأسماء والبيانات دفعة واحدة!
-                  </p>
-                </div>
-                <div className="mt-4 flex items-center justify-between w-full text-3xs font-black text-emerald-600 border-t border-emerald-50/50 pt-2 group-hover:text-emerald-700">
-                  <span>استيراد وتنزيل القوائم 📁</span>
-                  <span className="transform translate-x-0 group-hover:-translate-x-1 transition-transform">←</span>
-                </div>
-              </button>
-
             </div>
           </div>
         </div>
@@ -2283,6 +2259,48 @@ export default function AdminPanel({
             </div>
           </div>
 
+          {/* School Name Customization Card */}
+          <div className="bg-gradient-to-r from-blue-50/60 to-indigo-50/60 border border-blue-100 rounded-2xl p-5 text-right space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl mt-0.5">🏫</span>
+              <div>
+                <h3 className="text-sm font-black text-slate-800">تخصيص هوية واسم المدرسة الحالي</h3>
+                <p className="text-3xs text-slate-500 font-bold mt-1">
+                  يمكنك تعديل اسم مدرستك الحالي في أي وقت لتحديث الهوية بالكامل في كافة التقارير واللوحات الجانبية والواجهات المطبوعة.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3 max-w-md">
+              <input
+                type="text"
+                defaultValue={schoolName || ""}
+                placeholder="أدخل اسم المدرسة الجديد"
+                id="school-settings-input"
+                className="flex-1 text-xs font-bold px-3.5 py-2.5 bg-white border border-slate-200/80 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 rounded-xl outline-none transition text-right"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const inputEl = document.getElementById("school-settings-input") as HTMLInputElement;
+                  if (inputEl) {
+                    const trimmed = inputEl.value.trim();
+                    if (!trimmed) {
+                      alert("يرجى إدخال اسم مدرسة صالح.");
+                      return;
+                    }
+                    if (onSchoolNameChange) {
+                      onSchoolNameChange(trimmed);
+                    }
+                  }
+                }}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition cursor-pointer"
+              >
+                تحديث الاسم ✨
+              </button>
+            </div>
+          </div>
+
           {gradesAddMode === "excel" ? (
             /* excel upload card for grades */
             <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-6 space-y-4">
@@ -2395,14 +2413,25 @@ export default function AdminPanel({
                   <button
                     type="submit"
                     disabled={submitting.addGrade}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1 whitespace-nowrap transition animate-pulse-once"
+                    className={`relative overflow-hidden bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 whitespace-nowrap transition-all duration-300 ${
+                      submitting.addGrade 
+                        ? "ring-4 ring-blue-200/80 scale-95 shadow-md" 
+                        : "hover:scale-101"
+                    }`}
                   >
-                    {submitting.addGrade ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="w-3.5 h-3.5" />
-                    )}
+                    <Plus className="w-3.5 h-3.5" />
                     <span>إضافة صف</span>
+
+                    {submitting.addGrade && (
+                      <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
+                        <div className="relative flex items-center justify-center">
+                          {/* Beautiful concentric spinning rings */}
+                          <div className="absolute w-6.5 h-6.5 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                        <span className="text-3xs font-extrabold animate-pulse">جاري الإضافة...</span>
+                      </div>
+                    )}
                   </button>
                 </form>
 
@@ -2494,14 +2523,25 @@ export default function AdminPanel({
                       type="button"
                       onClick={handleAddClassSequence}
                       disabled={submitting.addClass}
-                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                      className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
+                        submitting.addClass
+                          ? "ring-4 ring-blue-200/80 scale-95 shadow-md"
+                          : "hover:scale-101"
+                      }`}
                     >
-                      {submitting.addClass ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Plus className="w-4 h-4" />
-                      )}
+                      <Plus className="w-4 h-4" />
                       <span>إضافة "الفصل {selectedClassNumber}" للصف الدراسي</span>
+
+                      {submitting.addClass && (
+                        <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
+                          <div className="relative flex items-center justify-center">
+                            {/* Beautiful concentric spinning rings */}
+                            <div className="absolute w-7 h-7 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
+                            <div className="w-4.5 h-4.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          </div>
+                          <span className="text-xs font-bold animate-pulse">جاري إضافة الفصل...</span>
+                        </div>
+                      )}
                     </button>
 
                     {/* Classes list of current selected grade */}
@@ -2556,30 +2596,47 @@ export default function AdminPanel({
           {/* Header & Mode Switcher */}
           <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-3xs flex items-center justify-between flex-wrap gap-3">
             <div>
-              <h2 className="text-md font-extrabold text-slate-800">إدارة المعلمين والمعلمات 💼</h2>
+              <h2 className="text-md font-extrabold text-slate-800">إضافة المعلمين والمعلمات 💼</h2>
               <p className="text-2xs text-slate-400 font-bold mt-0.5">تسجيل المعلمين المعتمدين لتخويلهم صلاحيات رصد الحضور والغياب والسلوك للطلاب.</p>
             </div>
             
             {/* Mode Switcher */}
-            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setTeacherAddMode("individual")}
-                className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
-                  teacherAddMode === "individual" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                <span>معلم فردي ✍️</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTeacherAddMode("excel")}
-                className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
-                  teacherAddMode === "excel" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                <span>نسخ ولصق الأسماء 📋</span>
-              </button>
+            <div className="flex items-center gap-2">
+              {currentStep === 7.5 && !hasClickedTeacherSwitcher && (
+                <span className="text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg animate-pulse">
+                  اختر أحد الخيارين 👈
+                </span>
+              )}
+              <div className={`flex bg-slate-100 p-0.5 rounded-lg border transition-all ${
+                currentStep === 7.5 && !hasClickedTeacherSwitcher
+                  ? "ring-4 ring-amber-400 border-white scale-102 animate-pulse"
+                  : "border-slate-200"
+              }`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherAddMode("individual");
+                    setHasClickedTeacherSwitcher(true);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
+                    teacherAddMode === "individual" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <span>معلم فردي ✍️</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherAddMode("excel");
+                    setHasClickedTeacherSwitcher(true);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
+                    teacherAddMode === "excel" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  <span>نسخ ولصق الأسماء 📋</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2600,13 +2657,22 @@ export default function AdminPanel({
                       placeholder="مثال: أ/ ماجد عبد الله الناصر"
                       value={newTeacherName}
                       onChange={(e) => setNewTeacherName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none"
+                      className={`w-full bg-slate-50 border rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none transition-all ${
+                        currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length === 0
+                          ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
+                          : "border-slate-200"
+                      }`}
                     />
+                    {currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length === 0 && (
+                      <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى كتابة اسم المعلم هنا لتسجيله في المدرسة</p>
+                    )}
                   </div>
                   <button
                     type="submit"
                     disabled={submitting.addTeacher}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs"
+                    className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
+                      currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length > 0 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102" : ""
+                    }`}
                   >
                     {submitting.addTeacher ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -2614,6 +2680,11 @@ export default function AdminPanel({
                       <Plus className="w-4 h-4" />
                     )}
                     <span>تسجيل المعلم في المدرسة</span>
+                    {currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length > 0 && (
+                      <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                        اضغط هنا 👈
+                      </span>
+                    )}
                   </button>
                 </form>
               ) : (
@@ -2629,8 +2700,15 @@ export default function AdminPanel({
 أ/ علي الغامدي"
                       value={pastedTeachersText}
                       onChange={(e) => setPastedTeachersText(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono"
+                      className={`w-full bg-slate-50 border rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono transition-all ${
+                        currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0
+                          ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
+                          : "border-slate-200 focus:border-blue-500"
+                      }`}
                     />
+                    {currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0 && (
+                      <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى لصق قائمة الأسماء هنا في المربع لبدء الاستيراد دفعة واحدة</p>
+                    )}
                   </div>
 
                   {parsedTeacherNames.length > 0 && (
@@ -2653,7 +2731,9 @@ export default function AdminPanel({
                   <button
                     type="submit"
                     disabled={parsedTeacherNames.length === 0 || statsLoading || submitting.importTeachers}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                    className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
+                      currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102" : ""
+                    }`}
                   >
                     {submitting.importTeachers ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -2661,6 +2741,11 @@ export default function AdminPanel({
                       <Plus className="w-4 h-4" />
                     )}
                     <span>اعتماد واستيراد {parsedTeacherNames.length} معلم دفعة واحدة 📋</span>
+                    {currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 && (
+                      <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                        اضغط هنا 👈
+                      </span>
+                    )}
                   </button>
                 </form>
               )}
@@ -2828,7 +2913,7 @@ export default function AdminPanel({
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-3xs space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <div>
-                <h2 className="text-md font-extrabold text-slate-800">إدارة الصفوف والفصول والطلاب 👥</h2>
+                <h2 className="text-md font-extrabold text-slate-800">إضافة الطلاب والفصول 👥</h2>
                 <p className="text-2xs text-slate-400 font-bold">تصفح وتعديل الطلاب والهيكل الأكاديمي، وتوليد كلمات المرور في شاشة واحدة متكاملة.</p>
               </div>
               
@@ -2839,10 +2924,17 @@ export default function AdminPanel({
                   setSelectedGradeIdForClasses(selectedGradeId);
                   setShowStructureManager(true);
                 }}
-                className="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-extrabold px-4.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                className={`bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-extrabold px-4.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all ${
+                  currentStep === 2 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-105" : ""
+                }`}
               >
                 <Settings className="w-4 h-4 text-white" />
                 <span>إضافة / تعديل الفصول ⚙️</span>
+                {currentStep === 2 && (
+                  <span className="text-[9px] bg-slate-900 text-amber-400 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                    اضغط هنا 👈
+                  </span>
+                )}
               </button>
             </div>
 
@@ -2951,10 +3043,17 @@ export default function AdminPanel({
                       showAddStudentSection
                         ? "bg-slate-200 text-slate-700 hover:bg-slate-300"
                         : "bg-blue-600 hover:bg-blue-700 text-white"
+                    } ${
+                      currentStep === 6 && !showAddStudentSection ? "ring-4 ring-blue-500/50 border-2 border-white animate-pulse scale-105" : ""
                     }`}
                   >
                     <Plus className="w-4 h-4" />
                     <span>{showAddStudentSection ? "إخفاء نافذة الإضافة" : "إضافة طالب / طلاب للفصل"}</span>
+                    {currentStep === 6 && !showAddStudentSection && (
+                      <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                        اضغط هنا 👈
+                      </span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -2969,25 +3068,42 @@ export default function AdminPanel({
                     </h3>
                     
                     {/* Add Mode switcher */}
-                    <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                      <button
-                        type="button"
-                        onClick={() => setStudentAddMode("individual")}
-                        className={`px-3 py-1 rounded-md text-3xs font-extrabold transition ${
-                          studentAddMode === "individual" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        طالب فردي ✍️
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStudentAddMode("excel")}
-                        className={`px-3 py-1 rounded-md text-3xs font-extrabold transition ${
-                          studentAddMode === "excel" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        نسخ ولصق الأسماء 📋
-                      </button>
+                    <div className="flex items-center gap-2">
+                      {currentStep === 6 && !hasClickedStudentSwitcher && (
+                        <span className="text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg animate-pulse">
+                          اختر أحد الخيارين 👈
+                        </span>
+                      )}
+                      <div className={`flex bg-slate-100 p-0.5 rounded-lg border transition-all ${
+                        currentStep === 6 && !hasClickedStudentSwitcher
+                          ? "ring-4 ring-amber-400 border-white scale-102 animate-pulse"
+                          : "border-slate-200"
+                      }`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStudentAddMode("individual");
+                            setHasClickedStudentSwitcher(true);
+                          }}
+                          className={`px-3 py-1 rounded-md text-3xs font-extrabold transition ${
+                            studentAddMode === "individual" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          طالب فردي ✍️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStudentAddMode("excel");
+                            setHasClickedStudentSwitcher(true);
+                          }}
+                          className={`px-3 py-1 rounded-md text-3xs font-extrabold transition ${
+                            studentAddMode === "excel" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          نسخ ولصق الأسماء 📋
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -3000,14 +3116,25 @@ export default function AdminPanel({
                           placeholder="مثال: خالد عبد العزيز اليوسف..."
                           value={newStudentName}
                           onChange={(e) => setNewStudentName(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none"
+                          className={`w-full bg-slate-50 border rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none transition-all ${
+                            currentStep === 6 && hasClickedStudentSwitcher && newStudentName.trim().length === 0
+                              ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
+                              : "border-slate-200"
+                          }`}
                         />
+                        {currentStep === 6 && hasClickedStudentSwitcher && newStudentName.trim().length === 0 && (
+                          <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى كتابة اسم الطالب هنا لإضافته للفصل</p>
+                        )}
                       </div>
                       <div className="sm:col-span-3">
                         <button
                           type="submit"
                           disabled={submitting.addStudent}
-                          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                          className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
+                            currentStep === 6 && hasClickedStudentSwitcher && newStudentName.trim().length > 0
+                              ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102"
+                              : ""
+                          }`}
                         >
                           {submitting.addStudent ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -3015,6 +3142,11 @@ export default function AdminPanel({
                             <Plus className="w-4 h-4" />
                           )}
                           <span>إضافة الطالب</span>
+                          {currentStep === 6 && hasClickedStudentSwitcher && newStudentName.trim().length > 0 && (
+                            <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                              اضغط هنا 👈
+                            </span>
+                          )}
                         </button>
                       </div>
                     </form>
@@ -3027,8 +3159,15 @@ export default function AdminPanel({
                           placeholder="خالد عبد العزيز اليوسف&#10;محمد أحمد السديري&#10;فهد سليمان الدوسري"
                           value={pastedStudentsText}
                           onChange={(e) => setPastedStudentsText(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono"
+                          className={`w-full bg-slate-50 border rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono transition-all ${
+                            currentStep === 6 && hasClickedStudentSwitcher && pastedStudentsText.trim().length === 0
+                              ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
+                              : "border-slate-200 focus:border-blue-500"
+                          }`}
                         />
+                        {currentStep === 6 && hasClickedStudentSwitcher && pastedStudentsText.trim().length === 0 && (
+                          <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى لصق قائمة الأسماء هنا في المربع لبدء الاستيراد دفعة واحدة</p>
+                        )}
                       </div>
 
                       {parsedStudentNames.length > 0 && (
@@ -3051,7 +3190,11 @@ export default function AdminPanel({
                       <button
                         type="submit"
                         disabled={parsedStudentNames.length === 0 || statsLoading || submitting.importStudents}
-                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                        className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
+                          currentStep === 6 && hasClickedStudentSwitcher && parsedStudentNames.length > 0
+                            ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102"
+                            : ""
+                        }`}
                       >
                         {submitting.importStudents ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -3059,6 +3202,11 @@ export default function AdminPanel({
                           <Plus className="w-4 h-4" />
                         )}
                         <span>اعتماد واستيراد {parsedStudentNames.length} طالب دفعة واحدة</span>
+                        {currentStep === 6 && hasClickedStudentSwitcher && parsedStudentNames.length > 0 && (
+                          <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                            اضغط هنا للاستيراد 👈
+                          </span>
+                        )}
                       </button>
                     </form>
                   )}
@@ -3265,7 +3413,7 @@ export default function AdminPanel({
                     }
                   });
                 }}
-                className="text-slate-400 hover:text-slate-600 p-2 rounded-xl hover:bg-slate-100 transition-all"
+                className="transition-all duration-300 p-2 rounded-xl flex items-center gap-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -3395,20 +3543,46 @@ export default function AdminPanel({
                   </div>
 
                   {/* Add Grade Subform */}
-                  <form onSubmit={handleAddGradeSubmit} className="flex gap-2">
+                  <form 
+                    onSubmit={handleAddGradeSubmit} 
+                    className={`flex gap-2 p-1.5 rounded-2xl transition-all duration-300 ${
+                      currentStep === 3 ? "ring-4 ring-blue-500/50 bg-blue-50/50 border border-blue-400 animate-pulse scale-102" : ""
+                    }`}
+                  >
                     <input
                       type="text"
                       placeholder="مثال: الصف الأول..."
                       value={newGradeName}
                       onChange={(e) => setNewGradeName(e.target.value)}
-                      className="flex-1 bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none"
+                      className="flex-1 bg-white border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none"
                     />
                     <button
                       type="submit"
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1 whitespace-nowrap transition"
+                      disabled={submitting.addGrade}
+                      className={`relative overflow-hidden bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 whitespace-nowrap transition-all duration-300 ${
+                        submitting.addGrade 
+                          ? "ring-4 ring-blue-200/80 scale-95 shadow-md" 
+                          : "hover:scale-101"
+                      }`}
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>إضافة صف</span>
+                      {currentStep === 3 && !submitting.addGrade && (
+                        <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                          اضغط هنا 👈
+                        </span>
+                      )}
+
+                      {submitting.addGrade && (
+                        <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
+                          <div className="relative flex items-center justify-center">
+                            {/* Beautiful concentric spinning rings */}
+                            <div className="absolute w-6.5 h-6.5 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          </div>
+                          <span className="text-3xs font-extrabold animate-pulse">جاري...</span>
+                        </div>
+                      )}
                     </button>
                   </form>
 
@@ -3492,10 +3666,33 @@ export default function AdminPanel({
                       <button
                         type="button"
                         onClick={handleAddClassSequence}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition"
+                        disabled={submitting.addClass}
+                        className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
+                          currentStep === 4 ? "ring-4 ring-blue-500/50 border-2 border-white animate-pulse scale-102" : ""
+                        } ${
+                          submitting.addClass
+                            ? "ring-4 ring-blue-200/80 scale-95 shadow-md"
+                            : "hover:scale-101"
+                        }`}
                       >
                         <Plus className="w-4 h-4" />
                         <span>إضافة "الفصل {selectedClassNumber}" للصف الدراسي</span>
+                        {currentStep === 4 && !submitting.addClass && (
+                          <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                            اضغط هنا 👈
+                          </span>
+                        )}
+
+                        {submitting.addClass && (
+                          <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
+                            <div className="relative flex items-center justify-center">
+                              {/* Beautiful concentric spinning rings */}
+                              <div className="absolute w-7 h-7 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
+                              <div className="w-4.5 h-4.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            </div>
+                            <span className="text-xs font-bold animate-pulse">جاري إضافة الفصل...</span>
+                          </div>
+                        )}
                       </button>
 
                       {/* Classes list of current selected grade */}
