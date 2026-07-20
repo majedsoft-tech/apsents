@@ -12,8 +12,19 @@ import {
   serverTimestamp,
   onSnapshot
 } from "firebase/firestore";
-import { db, auth } from "./firebase";
-import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord } from "./types";
+import { db, auth as firebaseAuth } from "./firebase";
+import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, RegisteredUser } from "./types";
+
+// Fallback user proxy to support unauthenticated public access
+const auth = {
+  get currentUser() {
+    return firebaseAuth.currentUser || {
+      uid: "QgOSyBcP28MzmbJT92aH8vdgAG33",
+      email: "majedsoft@gmail.com",
+      displayName: "زائر عام"
+    };
+  }
+};
 
 // Collection Names
 const GRADES_COLL = "grades";
@@ -34,6 +45,7 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
   try {
     const querySnapshot = await getDocs(collection(db, colName));
     const results: any[] = [];
+    const seenIds = new Set<string>();
     
     querySnapshot.forEach(docSnap => {
       const data = docSnap.data();
@@ -59,7 +71,8 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
         }
       }
 
-      if (belongs) {
+      if (belongs && !seenIds.has(docSnap.id)) {
+        seenIds.add(docSnap.id);
         results.push({ id: docSnap.id, ...data });
       }
     });
@@ -109,6 +122,50 @@ export async function getAttendanceRecord(
   return found ? (found as AttendanceRecord) : null;
 }
 
+// Subscribe to a specific Attendance Record in real-time
+export function subscribeToAttendanceRecord(
+  date: string,
+  period: string,
+  gradeId: string,
+  classId: string,
+  callback: (record: AttendanceRecord | null) => void,
+  onError?: (error: any) => void
+) {
+  const user = auth.currentUser;
+  if (!user) {
+    callback(null);
+    return () => {};
+  }
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, ATTENDANCE_COLL);
+  return onSnapshot(q, (snapshot) => {
+    let found: AttendanceRecord | null = null;
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      if (data.userId === currentUid) {
+        belongs = true;
+      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      } else if (currentEmail.includes("majedsoft")) {
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs && data.date === date && data.period === period && data.gradeId === gradeId && data.classId === classId) {
+        found = { id: docSnap.id, ...data } as AttendanceRecord;
+      }
+    });
+    callback(found);
+  }, onError);
+}
+
 // Save Attendance Record
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
   const uid = auth.currentUser?.uid;
@@ -142,6 +199,50 @@ export async function getBehaviorRecords(studentId: string): Promise<BehaviorRec
   const records = await fetchAndFilterCollection(BEHAVIORS_COLL);
   const filtered = records.filter(r => r.studentId === studentId) as BehaviorRecord[];
   return filtered.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// Subscribe to Behavior Records for a student in real-time
+export function subscribeToBehaviorRecords(
+  studentId: string,
+  callback: (records: BehaviorRecord[]) => void,
+  onError?: (error: any) => void
+) {
+  const user = auth.currentUser;
+  if (!user) {
+    callback([]);
+    return () => {};
+  }
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, BEHAVIORS_COLL);
+  return onSnapshot(q, (snapshot) => {
+    const records: BehaviorRecord[] = [];
+    const seenIds = new Set<string>();
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      if (data.userId === currentUid) {
+        belongs = true;
+      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      } else if (currentEmail.includes("majedsoft")) {
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs && data.studentId === studentId && !seenIds.has(docSnap.id)) {
+        seenIds.add(docSnap.id);
+        records.push({ id: docSnap.id, ...data } as BehaviorRecord);
+      }
+    });
+    records.sort((a, b) => b.date.localeCompare(a.date));
+    callback(records);
+  }, onError);
 }
 
 // Save Behavior Record
@@ -345,6 +446,7 @@ export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRe
   const q = collection(db, ATTENDANCE_COLL);
   return onSnapshot(q, (snapshot) => {
     const records: AttendanceRecord[] = [];
+    const seenIds = new Set<string>();
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       let belongs = false;
@@ -361,7 +463,8 @@ export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRe
         }
       }
 
-      if (belongs) {
+      if (belongs && !seenIds.has(docSnap.id)) {
+        seenIds.add(docSnap.id);
         records.push({ id: docSnap.id, ...data } as AttendanceRecord);
       }
     });
@@ -387,6 +490,7 @@ export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord
   const q = collection(db, BEHAVIORS_COLL);
   return onSnapshot(q, (snapshot) => {
     const records: BehaviorRecord[] = [];
+    const seenIds = new Set<string>();
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       let belongs = false;
@@ -403,7 +507,8 @@ export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord
         }
       }
 
-      if (belongs) {
+      if (belongs && !seenIds.has(docSnap.id)) {
+        seenIds.add(docSnap.id);
         records.push({ id: docSnap.id, ...data } as BehaviorRecord);
       }
     });
@@ -602,4 +707,306 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
     console.error("Error saving school name:", err);
   }
 }
+
+// Generic live subscription helper matching fetchAndFilterCollection logic
+function subscribeToCollection(colName: string, callback: (data: any[]) => void, onError?: (error: any) => void) {
+  const user = auth.currentUser;
+  if (!user) {
+    callback([]);
+    return () => {};
+  }
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, colName);
+  return onSnapshot(q, (snapshot) => {
+    const results: any[] = [];
+    const seenIds = new Set<string>();
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      let belongs = false;
+
+      // 1. Direct match by UID
+      if (data.userId === currentUid) {
+        belongs = true;
+      }
+      // 2. Direct match by Email
+      else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+        belongs = true;
+      }
+      // 3. Fallbacks for majedsoft@gmail.com
+      else if (currentEmail.includes("majedsoft")) {
+        if (!data.userId && !data.userEmail) {
+          belongs = true;
+        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          belongs = true;
+        }
+      }
+
+      if (belongs && !seenIds.has(docSnap.id)) {
+        seenIds.add(docSnap.id);
+        results.push({ id: docSnap.id, ...data });
+      }
+    });
+    callback(results);
+  }, onError);
+}
+
+// Subscribe All Grades in real-time
+export function subscribeToGrades(callback: (grades: Grade[]) => void, onError?: (error: any) => void) {
+  return subscribeToCollection(GRADES_COLL, callback, onError);
+}
+
+// Subscribe All Classes in real-time
+export function subscribeToClasses(callback: (classes: Class[]) => void, onError?: (error: any) => void) {
+  return subscribeToCollection(CLASSES_COLL, callback, onError);
+}
+
+// Subscribe All Teachers in real-time
+export function subscribeToTeachers(callback: (teachers: Teacher[]) => void, onError?: (error: any) => void) {
+  return subscribeToCollection(TEACHERS_COLL, callback, onError);
+}
+
+// Subscribe All Students in real-time
+export function subscribeToStudents(callback: (students: Student[]) => void, onError?: (error: any) => void) {
+  return subscribeToCollection(STUDENTS_COLL, callback, onError);
+}
+
+// Subscribe School Name in real-time
+export function subscribeToSchoolName(callback: (schoolName: string) => void, onError?: (error: any) => void) {
+  const user = auth.currentUser;
+  if (!user) {
+    callback("");
+    return () => {};
+  }
+  const currentUid = user.uid;
+  const currentEmail = user.email?.toLowerCase() || "";
+
+  const q = collection(db, SETTINGS_COLL);
+  return onSnapshot(q, (snapshot) => {
+    let schoolNameVal = "";
+    let found = false;
+
+    // 1. Check direct match by UID
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.userId === currentUid) {
+        schoolNameVal = data.schoolName || "";
+        found = true;
+      }
+    });
+
+    // 2. Check match by email if not found
+    if (!found && currentEmail) {
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
+          schoolNameVal = data.schoolName || "";
+          found = true;
+        }
+      });
+    }
+
+    // 3. Legacy global data fallback for majedsoft@gmail.com
+    if (!found && currentEmail.includes("majedsoft")) {
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
+          schoolNameVal = data.schoolName || "";
+          found = true;
+        }
+      });
+    }
+
+    callback(schoolNameVal);
+  }, onError);
+}
+
+// --- REGISTERED USERS SYSTEM ---
+const USERS_COLL = "registered_users";
+
+/**
+ * Registers or updates a user profile when they login or state checking occurs.
+ */
+export async function registerUserInDb(
+  user: { uid: string; email: string; displayName?: string; photoURL?: string },
+  currentSchoolName: string = ""
+): Promise<void> {
+  if (!user || !user.uid) return;
+  const email = user.email?.toLowerCase() || "";
+  if (!email || email === "majedsoft@gmail.com" && user.displayName === "زائر عام") {
+    // Skip registering the guest general user
+    return;
+  }
+
+  try {
+    const docRef = doc(db, USERS_COLL, user.uid);
+    const docSnap = await getDocs(query(collection(db, USERS_COLL), where("uid", "==", user.uid)));
+    
+    let existingData: any = null;
+    if (!docSnap.empty) {
+      existingData = docSnap.docs[0].data();
+    }
+
+    const payload: Partial<RegisteredUser> = {
+      uid: user.uid,
+      email: email,
+      displayName: user.displayName || email.split("@")[0],
+      photoURL: user.photoURL || "",
+      lastLogin: Date.now(),
+      schoolName: currentSchoolName || existingData?.schoolName || "",
+      status: existingData?.status || "نشط"
+    };
+
+    if (!existingData) {
+      payload.createdAt = Date.now();
+    }
+
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err) {
+    console.error("Error registering user in DB:", err);
+  }
+}
+
+/**
+ * Loads all registered users from Firestore and retrieves statistics/counts of their database items
+ */
+export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, USERS_COLL));
+    const users: RegisteredUser[] = [];
+    
+    querySnapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      users.push({
+        id: docSnap.id,
+        uid: data.uid,
+        email: data.email,
+        displayName: data.displayName,
+        photoURL: data.photoURL,
+        lastLogin: data.lastLogin || Date.now(),
+        createdAt: data.createdAt || Date.now(),
+        schoolName: data.schoolName || "",
+        status: data.status || "نشط"
+      });
+    });
+
+    // To provide real statistics for the super admin, let's aggregate counts across all documents!
+    // We will query all grades, classes, teachers, and students once and count them grouped by userId/userEmail.
+    const [allGrades, allClasses, allTeachers, allStudents] = await Promise.all([
+      getDocs(collection(db, GRADES_COLL)),
+      getDocs(collection(db, CLASSES_COLL)),
+      getDocs(collection(db, TEACHERS_COLL)),
+      getDocs(collection(db, STUDENTS_COLL))
+    ]);
+
+    // Build user stats map
+    const userStatsMap: Record<string, { grades: number; classes: number; teachers: number; students: number }> = {};
+    
+    const incrementStat = (userId: string, email: string, statType: "grades" | "classes" | "teachers" | "students") => {
+      const key = userId || email?.toLowerCase();
+      if (!key) return;
+      if (!userStatsMap[key]) {
+        userStatsMap[key] = { grades: 0, classes: 0, teachers: 0, students: 0 };
+      }
+      userStatsMap[key][statType]++;
+    };
+
+    allGrades.forEach(d => {
+      const data = d.data();
+      incrementStat(data.userId, data.userEmail, "grades");
+    });
+    allClasses.forEach(d => {
+      const data = d.data();
+      incrementStat(data.userId, data.userEmail, "classes");
+    });
+    allTeachers.forEach(d => {
+      const data = d.data();
+      incrementStat(data.userId, data.userEmail, "teachers");
+    });
+    allStudents.forEach(d => {
+      const data = d.data();
+      incrementStat(data.userId, data.userEmail, "students");
+    });
+
+    // Map counts back to each user
+    users.forEach(u => {
+      const statsByUid = userStatsMap[u.uid];
+      const statsByEmail = userStatsMap[u.email?.toLowerCase()];
+      const combinedStats = statsByUid || statsByEmail || { grades: 0, classes: 0, teachers: 0, students: 0 };
+      
+      u.gradesCount = combinedStats.grades;
+      u.classesCount = combinedStats.classes;
+      u.teachersCount = combinedStats.teachers;
+      u.studentsCount = combinedStats.students;
+    });
+
+    // Sort by registration date descending (newest first)
+    return users.sort((a, b) => b.createdAt - a.createdAt);
+  } catch (err) {
+    console.error("Error loading registered users:", err);
+    return [];
+  }
+}
+
+/**
+ * Updates a user's account status (e.g. Suspend or Activate)
+ */
+export async function updateUserStatus(uid: string, status: "نشط" | "موقوف"): Promise<void> {
+  try {
+    const docRef = doc(db, USERS_COLL, uid);
+    await setDoc(docRef, { status }, { merge: true });
+  } catch (err) {
+    console.error("Error updating user status:", err);
+    throw err;
+  }
+}
+
+/**
+ * Deletes a registered user from the directory, and optionally wipes all their school data entirely.
+ */
+export async function deleteRegisteredUser(uid: string, email: string, wipeSchoolData: boolean = false): Promise<void> {
+  try {
+    // 1. Delete user registration document
+    await deleteDoc(doc(db, USERS_COLL, uid));
+
+    // 2. If wipe is requested, find and delete all associated records across ALL collections
+    if (wipeSchoolData) {
+      const batch = writeBatch(db);
+      const emailLower = email?.toLowerCase() || "";
+
+      const collectionsToClear = [
+        GRADES_COLL,
+        CLASSES_COLL,
+        TEACHERS_COLL,
+        STUDENTS_COLL,
+        ATTENDANCE_COLL,
+        BEHAVIORS_COLL,
+        SETTINGS_COLL
+      ];
+
+      for (const colName of collectionsToClear) {
+        const snap = await getDocs(collection(db, colName));
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          let belongs = false;
+
+          if (data.userId === uid) belongs = true;
+          else if (data.userEmail && data.userEmail.toLowerCase() === emailLower) belongs = true;
+
+          if (belongs) {
+            batch.delete(docSnap.ref);
+          }
+        });
+      }
+
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error("Error deleting registered user and wiping data:", err);
+    throw err;
+  }
+}
+
+
 

@@ -45,3 +45,21 @@ export interface BehaviorRecord {
   violation: string;
   timestamp: any;
 }
+
+export interface RegisteredUser {
+  id: string; // corresponds to uid
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  lastLogin: number;
+  createdAt: number;
+  schoolName: string;
+  status: "نشط" | "موقوف";
+  // Counters for display
+  gradesCount?: number;
+  classesCount?: number;
+  teachersCount?: number;
+  studentsCount?: number;
+}
+

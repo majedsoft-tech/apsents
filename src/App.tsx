@@ -6,11 +6,18 @@ import {
   getStudents, 
   seedDatabaseIfEmpty,
   getSchoolName,
-  saveSchoolName
+  saveSchoolName,
+  subscribeToGrades,
+  subscribeToClasses,
+  subscribeToTeachers,
+  subscribeToStudents,
+  subscribeToSchoolName,
+  registerUserInDb
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
 import AdminPanel from "./components/AdminPanel";
+import SuperAdminPanel from "./components/SuperAdminPanel";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
 import { 
@@ -37,11 +44,14 @@ import {
   Edit2
 } from "lucide-react";
 
-function getInitialMode(): "teacher" | "admin" | "stats-only" {
+function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
   const search = window.location.search.toLowerCase();
   
+  if (path.includes("super-admin") || hash.includes("super-admin") || search.includes("super-admin") || search.includes("page=super-admin")) {
+    return "super-admin";
+  }
   if (path.includes("stats-only") || hash.includes("stats-only") || search.includes("stats-only") || search.includes("page=stats-only")) {
     return "stats-only";
   }
@@ -64,6 +74,13 @@ export default function App() {
   const [modalError, setModalError] = useState<string>("");
   const [modalSaving, setModalSaving] = useState<boolean>(false);
 
+  // Global Operation Progress State (Saves/Loads/Deletes across the app)
+  const [globalProgress, setGlobalProgress] = useState<{
+    active: boolean;
+    type: "save" | "load" | "delete" | "import" | null;
+    label: string;
+  }>({ active: false, type: null, label: "" });
+
   // Sidebar Inline School Name Edit States
   const [isEditingSidebarSchool, setIsEditingSidebarSchool] = useState<boolean>(false);
   const [sidebarSchoolInput, setSidebarSchoolInput] = useState<string>("");
@@ -76,7 +93,7 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
 
   // Responsive Navigation States
-  const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only">(getInitialMode());
+  const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only" | "super-admin">(getInitialMode());
   const [isDirectTeacherLink, setIsDirectTeacherLink] = useState<boolean>(() => {
     return getInitialMode() === "teacher";
   });
@@ -87,6 +104,34 @@ export default function App() {
       setIsDirectTeacherLink(false);
     }
   }, [appMode]);
+
+  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink);
+  const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
+
+  // Ref for header height measurement
+  const headerRef = React.useRef<HTMLElement>(null);
+
+  // Monitor header height dynamically and set CSS custom property
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      const height = showHeader && headerRef.current ? headerRef.current.offsetHeight : 0;
+      document.documentElement.style.setProperty('--header-height', `${height}px`);
+    };
+
+    updateHeaderHeight();
+
+    let observer: ResizeObserver | null = null;
+    if (headerRef.current) {
+      observer = new ResizeObserver(updateHeaderHeight);
+      observer.observe(headerRef.current);
+    }
+
+    window.addEventListener("resize", updateHeaderHeight);
+    return () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener("resize", updateHeaderHeight);
+    };
+  }, [showHeader, appMode]);
 
   const [copied, setCopied] = useState<boolean>(false);
   const [teacherCopied, setTeacherCopied] = useState<boolean>(false);
@@ -124,98 +169,173 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load all database entities in parallel to optimize speed and responsiveness
-  const loadDatabaseData = async () => {
-    try {
-      const [g, c, t, s, name] = await Promise.all([
-        getGrades(),
-        getClasses(),
-        getTeachers(),
-        getStudents(),
-        getSchoolName()
-      ]);
-
-      if (name) {
-        setSchoolName(name);
-        const user = auth.currentUser;
-        if (user && user.email) {
-          localStorage.setItem(`school_name_${user.email.toLowerCase()}`, name);
-        }
-      } else {
-        // Show customization dialog if no school name exists for this account
-        setSchoolName("");
-        setShowSchoolModal(true);
-      }
-
-      // Sort grades: oldest first (ascending by createdAt) so newly added grades appear after existing ones
-      const sortedGrades = [...g].sort((a, b) => {
-        const timeA = (a as any).createdAt || 0;
-        const timeB = (b as any).createdAt || 0;
-        if (timeA !== timeB) return timeA - timeB;
-        return a.name.localeCompare(b.name, "ar");
-      });
-
-      // Sort classes: ascending by the number attached to the class name
-      const getNumberFromName = (name: string): number => {
-        const match = name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 999999;
-      };
-
-      const sortedClasses = [...c].sort((a, b) => {
-        const numA = getNumberFromName(a.name);
-        const numB = getNumberFromName(b.name);
-        if (numA !== numB) return numA - numB;
-        return a.name.localeCompare(b.name, "ar");
-      });
-
-      const sortedTeachers = [...t].sort((a, b) => a.name.localeCompare(b.name, "ar"));
-
-      setGrades(sortedGrades);
-      setClasses(sortedClasses);
-      setTeachers(sortedTeachers);
-      setStudents(s);
-    } catch (error) {
-      console.error("Error loading data from Firestore:", error);
-    }
-  };
-
-  // Listen to Firebase Auth state change and load user-specific data
+  // Setup real-time subscribers for grades, classes, teachers, and students to keep data synced instantly
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      setAuthChecking(false);
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // Read cached school name from localStorage first to prevent loading screen flicker for returning users
-        const cached = localStorage.getItem(`school_name_${user.email?.toLowerCase()}`);
-        if (cached) {
-          setSchoolName(cached);
-        } else {
-          setSchoolName("");
-        }
-
-        setLoading(true);
-        try {
-          // Direct dynamic load of user-specific data with no default/fallback automatic seeding
-          await loadDatabaseData();
-        } catch (error) {
-          console.error("Initialization error:", error);
-        } finally {
-          setLoading(false);
-        }
+        setCurrentUser(user);
+        setAuthChecking(false);
       } else {
-        setGrades([]);
-        setClasses([]);
-        setTeachers([]);
-        setStudents([]);
-        setSchoolName("");
+        setCurrentUser(null);
+        setAuthChecking(false);
         setLoading(false);
       }
     });
-    return () => unsubscribe();
+    return () => unsubscribeAuth();
   }, []);
 
+  // Synchronize registered user profile in Firestore
+  useEffect(() => {
+    if (currentUser && !currentUser.isGuest) {
+      registerUserInDb({
+        uid: currentUser.uid,
+        email: currentUser.email,
+        displayName: currentUser.displayName,
+        photoURL: currentUser.photoURL
+      }, schoolName).catch((err) => {
+        console.error("Error updating registration: ", err);
+      });
+    }
+  }, [currentUser, schoolName]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    // Read cached school name from localStorage first to prevent loading screen flicker
+    const cached = localStorage.getItem(`school_name_${currentUser.email?.toLowerCase()}`);
+    if (cached) {
+      setSchoolName(cached);
+    }
+
+    setLoading(true);
+
+    let unsubSchool: (() => void) | null = null;
+    let unsubGrades: (() => void) | null = null;
+    let unsubClasses: (() => void) | null = null;
+    let unsubTeachers: (() => void) | null = null;
+    let unsubStudents: (() => void) | null = null;
+    let active = true;
+
+    const getNumberFromName = (name: string): number => {
+      const match = name.match(/\d+/);
+      return match ? parseInt(match[0], 10) : 999999;
+    };
+
+    const initialize = async () => {
+      try {
+        const [g, c, t, s, name] = await Promise.all([
+          getGrades(),
+          getClasses(),
+          getTeachers(),
+          getStudents(),
+          getSchoolName()
+        ]);
+
+        if (!active) return;
+
+        // Set initial state from authoritative Firestore load
+        if (name) {
+          setSchoolName(name);
+          if (currentUser.email) {
+            localStorage.setItem(`school_name_${currentUser.email.toLowerCase()}`, name);
+          }
+        } else {
+          setSchoolName("");
+          setShowSchoolModal(true);
+        }
+
+        const sortedGrades = [...g].sort((a, b) => {
+          const timeA = (a as any).createdAt || 0;
+          const timeB = (b as any).createdAt || 0;
+          if (timeA !== timeB) return timeA - timeB;
+          return a.name.localeCompare(b.name, "ar");
+        });
+        setGrades(sortedGrades);
+
+        const sortedClasses = [...c].sort((a, b) => {
+          const numA = getNumberFromName(a.name);
+          const numB = getNumberFromName(b.name);
+          if (numA !== numB) return numA - numB;
+          return a.name.localeCompare(b.name, "ar");
+        });
+        setClasses(sortedClasses);
+
+        const sortedTeachers = [...t].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+        setTeachers(sortedTeachers);
+
+        setStudents(s);
+
+        // Turn off loading once initial data is perfectly ready
+        setLoading(false);
+
+        // 1. Subscribe to School Name
+        unsubSchool = subscribeToSchoolName((newName) => {
+          if (newName) {
+            setSchoolName(newName);
+            if (currentUser.email) {
+              localStorage.setItem(`school_name_${currentUser.email.toLowerCase()}`, newName);
+            }
+          } else {
+            setSchoolName("");
+            setShowSchoolModal(true);
+          }
+        });
+
+        // 2. Subscribe to Grades
+        unsubGrades = subscribeToGrades((newGrades) => {
+          const sorted = [...newGrades].sort((a, b) => {
+            const timeA = (a as any).createdAt || 0;
+            const timeB = (b as any).createdAt || 0;
+            if (timeA !== timeB) return timeA - timeB;
+            return a.name.localeCompare(b.name, "ar");
+          });
+          setGrades(sorted);
+        });
+
+        // 3. Subscribe to Classes
+        unsubClasses = subscribeToClasses((newClasses) => {
+          const sorted = [...newClasses].sort((a, b) => {
+            const numA = getNumberFromName(a.name);
+            const numB = getNumberFromName(b.name);
+            if (numA !== numB) return numA - numB;
+            return a.name.localeCompare(b.name, "ar");
+          });
+          setClasses(sorted);
+        });
+
+        // 4. Subscribe to Teachers
+        unsubTeachers = subscribeToTeachers((newTeachers) => {
+          const sorted = [...newTeachers].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+          setTeachers(sorted);
+        });
+
+        // 5. Subscribe to Students
+        unsubStudents = subscribeToStudents((newStudents) => {
+          setStudents(newStudents);
+        });
+
+      } catch (err) {
+        console.error("Error doing initial database load:", err);
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initialize();
+
+    return () => {
+      active = false;
+      if (unsubSchool) (unsubSchool as () => void)();
+      if (unsubGrades) (unsubGrades as () => void)();
+      if (unsubClasses) (unsubClasses as () => void)();
+      if (unsubTeachers) (unsubTeachers as () => void)();
+      if (unsubStudents) (unsubStudents as () => void)();
+    };
+  }, [currentUser]);
+
   const handleRefreshData = async () => {
-    await loadDatabaseData();
+    // Data is already fully real-time through firestore live-subscriptions!
   };
 
   const handleCopyStatsLink = () => {
@@ -317,17 +437,17 @@ export default function App() {
     }
   }, [appMode, teacherTab, adminTab, schoolName]);
 
-  const navigateTo = (mode: "teacher" | "admin" | "stats-only") => {
-    const newPath = mode === "admin" ? "/admin" : mode === "stats-only" ? "/" : "/";
-    const newSearch = mode === "admin" ? "?page=admin" : mode === "stats-only" ? "?page=stats-only" : "?page=teacher";
-    const newHash = mode === "admin" ? "#/admin" : mode === "stats-only" ? "#/stats-only" : "#/";
+  const navigateTo = (mode: "teacher" | "admin" | "stats-only" | "super-admin") => {
+    const newPath = mode === "admin" ? "/admin" : mode === "super-admin" ? "/super-admin" : mode === "stats-only" ? "/" : "/";
+    const newSearch = mode === "admin" ? "?page=admin" : mode === "super-admin" ? "?page=super-admin" : mode === "stats-only" ? "?page=stats-only" : "?page=teacher";
+    const newHash = mode === "admin" ? "#/admin" : mode === "super-admin" ? "#/super-admin" : mode === "stats-only" ? "#/stats-only" : "#/";
     
     // Push state to browser history
     window.history.pushState({ mode }, "", `${newPath}${newSearch}${newHash}`);
     setAppMode(mode);
 
     // Keep right sidebar open and pinned when opening/switching links inside the control panel
-    if (mode === "admin" || mode === "teacher") {
+    if (mode === "admin" || mode === "super-admin" || mode === "teacher") {
       setIsSidebarOpen(true);
       setIsSidebarPinned(true);
     }
@@ -389,7 +509,7 @@ export default function App() {
             🏫
           </div>
           <div>
-            <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">SmartTeacher</h1>
+            <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300">SmartSchool</h1>
             <p className="text-xs text-slate-400 mt-2 font-bold">منصة رصد ومتابعة الغياب والسلوك للطلاب بطريقة مبتكرة</p>
           </div>
 
@@ -441,6 +561,21 @@ export default function App() {
 
   // Sidebar Menu Items Definition
   const menuGroups = [
+    ...(currentUser?.email?.toLowerCase() === "majedsoft@gmail.com" ? [
+      {
+        title: "الإدارة الفائقة للمنصة",
+        icon: <ShieldCheck className="w-4 h-4 text-amber-500" />,
+        items: [
+          {
+            id: "super-admin",
+            label: "إدارة المشتركين والمسجلين 👑",
+            icon: <Users className="w-4 h-4" />,
+            mode: "super-admin" as const,
+            tab: "users" as const
+          }
+        ]
+      }
+    ] : []),
     {
       title: "تسجيل الغياب للمعلمين",
       icon: <ClipboardCheck className="w-4 h-4 text-blue-400" />,
@@ -490,19 +625,20 @@ export default function App() {
     }
   ];
 
-  const handleMenuItemClick = (mode: "teacher" | "admin", tab: any) => {
+  const handleMenuItemClick = (mode: "teacher" | "admin" | "super-admin", tab: any) => {
     setAppMode(mode);
     if (mode === "teacher") {
       setTeacherTab(tab);
-    } else {
+    } else if (mode === "admin") {
       setAdminTab(tab);
     }
     setIsMobileMenuOpen(false); // Close mobile drawer if open
   };
 
   // Helper to check if a menu item is currently active
-  const isItemActive = (mode: "teacher" | "admin", tab: any) => {
+  const isItemActive = (mode: "teacher" | "admin" | "super-admin", tab: any) => {
     if (appMode !== mode) return false;
+    if (mode === "super-admin") return true;
     return mode === "teacher" ? teacherTab === tab : adminTab === tab;
   };
 
@@ -629,7 +765,7 @@ export default function App() {
               if (isDirectTeacherLink) {
                 return group.items.some(item => item.mode === "teacher");
               } else {
-                return group.items.some(item => item.mode === "admin");
+                return group.items.some(item => item.mode === "admin" || item.mode === "super-admin");
               }
             })
             .map((group, gIdx) => (
@@ -773,10 +909,10 @@ export default function App() {
             {/* Left side: Text details (second element in RTL) */}
             <div className="flex-1 min-w-0 text-right pr-0.5">
               <p className="text-xs font-black text-slate-100 tracking-tight truncate">
-                {currentUser?.displayName || "Majed Alnaser"}
+                {currentUser?.displayName || "مستخدم مسجل"}
               </p>
               <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5" dir="ltr">
-                {currentUser?.email || "majedsoft@gmail.com"}
+                {currentUser?.email || ""}
               </p>
             </div>
           </div>
@@ -784,7 +920,7 @@ export default function App() {
           {/* Horizontal separator matching the theme */}
           <div className="border-t border-slate-800/50"></div>
 
-          {/* Logout Button - Aligned from right to left (RTL Arabic) with a premium themed background */}
+          {/* Logout Button */}
           <button
             type="button"
             onClick={async () => {
@@ -796,7 +932,6 @@ export default function App() {
             }}
             className="w-full flex items-center justify-start gap-2.5 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/30 text-rose-400 hover:text-rose-300 rounded-xl transition-all duration-200 cursor-pointer"
           >
-            {/* Icon on the right (first child in RTL), text on the left */}
             <LogOut className="w-4 h-4 flex-shrink-0" />
             <span className="font-extrabold text-[11px]">تسجيل الخروج</span>
           </button>
@@ -821,11 +956,8 @@ export default function App() {
   );
   };
 
-  const showSidebar = appMode === "admin" || (appMode === "teacher" && !isDirectTeacherLink);
-  const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
-
   return (
-    <div className="min-h-screen flex bg-slate-100 font-sans text-slate-800" dir="rtl">
+    <div className="min-h-screen flex bg-gradient-to-br from-slate-100 via-blue-50/10 to-slate-200/40 font-sans text-slate-800" dir="rtl">
       
       {/* 1. PERSISTENT / FLOATING RIGHT SIDEBAR FOR DESKTOP */}
       {showSidebar && (
@@ -887,12 +1019,12 @@ export default function App() {
       )}
 
       {/* 3. MAIN APP SECTION */}
-      <div className="flex-1 min-h-screen flex flex-col bg-slate-50 overflow-x-hidden">
+      <div className="flex-1 min-h-screen flex flex-col bg-gradient-to-b from-blue-50/40 via-slate-50 to-slate-100/60">
         
         {/* Unified Portal Header (Desktop & Mobile Responsive) */}
         {showHeader && (
-          <header className="bg-white border-b border-slate-200/80 shadow-3xs sticky top-0 z-20 px-4 py-3 md:px-8">
-            <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <header ref={headerRef} className="bg-white border-b border-slate-200/80 shadow-3xs sticky top-0 z-20 px-4 py-3 md:px-6">
+            <div className="w-full flex items-center justify-between">
               {/* Hamburger (Mobile Only) & Portal Info */}
               <div className="flex items-center gap-3">
                 {appMode !== "stats-only" && (
@@ -920,27 +1052,33 @@ export default function App() {
                 
                 <div>
                   <h2 className="text-xs font-black text-slate-400">
-                    {appMode === "stats-only" 
-                      ? "إحصائيات وتقارير تفصيلية حية 📊" 
-                      : appMode === "admin" 
-                        ? "لوحة الإدارة والتحكم 🛡️" 
-                        : "بوابة الكادر التعليمي والتحضير 👤"
+                    {appMode === "super-admin"
+                      ? "لوحة الإدارة العليا والتحكم بالمنصة 👑"
+                      : appMode === "stats-only" 
+                        ? "إحصائيات وتقارير تفصيلية حية 📊" 
+                        : appMode === "admin" 
+                          ? "لوحة الإدارة والتحكم 🛡️" 
+                          : "بوابة الكادر التعليمي والتحضير 👤"
                     }
                   </h2>
                   <h1 className="text-sm md:text-base font-black text-slate-800 flex items-center gap-1.5">
                     <span>{schoolName ? `بوابة ${schoolName} الرقمية` : "البوابة الرقمية للرصد والمتابعة"}</span>
                     <span className={`hidden sm:inline px-2.5 py-0.5 rounded-full text-3xs font-extrabold border ${
-                      appMode === "stats-only"
-                        ? "bg-blue-50 text-blue-600 border-blue-100"
-                        : appMode === "admin" 
-                          ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
-                          : "bg-blue-50 text-blue-600 border-blue-100"
+                      appMode === "super-admin"
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : appMode === "stats-only"
+                          ? "bg-blue-50 text-blue-600 border-blue-100"
+                          : appMode === "admin" 
+                            ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                            : "bg-blue-50 text-blue-600 border-blue-100"
                     }`}>
-                      {appMode === "stats-only" 
-                        ? "صفحة الإحصائيات العامة" 
-                        : appMode === "admin" 
-                          ? "قسم الإشراف العام" 
-                          : "قسم المعلمين والمعلمات"
+                      {appMode === "super-admin"
+                        ? "قسم الإشراف الفائق للموقع"
+                        : appMode === "stats-only" 
+                          ? "صفحة الإحصائيات العامة" 
+                          : appMode === "admin" 
+                            ? "قسم الإشراف العام" 
+                            : "قسم المعلمين والمعلمات"
                       }
                     </span>
                   </h1>
@@ -978,8 +1116,15 @@ export default function App() {
         )}
 
         {/* Dynamic Inner Portal Content */}
-        <main className="flex-1 w-full max-w-7xl mx-auto px-4 md:px-8 py-6">
-          {appMode === "teacher" ? (
+        <main className="flex-1 w-full max-w-none px-3 md:px-6 py-4">
+          {appMode === "super-admin" ? (
+            <SuperAdminPanel
+              currentUser={currentUser}
+              onRefreshData={handleRefreshData}
+              globalProgress={globalProgress}
+              setGlobalProgress={setGlobalProgress}
+            />
+          ) : appMode === "teacher" ? (
             <TeacherPortal 
               grades={grades} 
               classes={classes} 
@@ -989,6 +1134,9 @@ export default function App() {
               setActiveTab={setTeacherTab}
               navigateTo={navigateTo}
               schoolName={schoolName}
+              isDirectTeacherLink={isDirectTeacherLink}
+              globalProgress={globalProgress}
+              setGlobalProgress={setGlobalProgress}
             />
           ) : (
             <AdminPanel 
@@ -1008,6 +1156,8 @@ export default function App() {
               schoolName={schoolName}
               onSchoolNameChange={handleSchoolNameChange}
               isSavingSchoolName={isSavingSchoolName}
+              globalProgress={globalProgress}
+              setGlobalProgress={setGlobalProgress}
             />
           )}
         </main>
@@ -1037,7 +1187,7 @@ export default function App() {
               <div className="text-center space-y-1.5">
                 <h3 className="text-base font-black text-slate-800">تخصيص النسخة لمدرستك ⚙️</h3>
                 <p className="text-3xs text-slate-500 font-bold leading-relaxed px-2">
-                  مرحباً بك في منصة <strong className="text-blue-600">SmartTeacher</strong> الرقمية! يرجى إدخال اسم مدرستك أو المجمع التعليمي الخاص بك لتخصيص كامل واجهات المنصة، تلوين الهوية، وتوليد التقارير والإحصائيات الحية باسم مدرستك فوراً.
+                  مرحباً بك في منصة <strong className="text-blue-600">SmartSchool</strong> الرقمية! يرجى إدخال اسم مدرستك أو المجمع التعليمي الخاص بك لتخصيص كامل واجهات المنصة، تلوين الهوية، وتوليد التقارير والإحصائيات الحية باسم مدرستك فوراً.
                 </p>
               </div>
 
@@ -1121,6 +1271,57 @@ export default function App() {
         <div className="fixed bottom-6 left-6 z-50 bg-slate-900 border border-slate-800/80 text-slate-200 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce text-xs font-bold" dir="rtl">
           <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
           <span className="tracking-wide">جاري مزامنة وحفظ الاسم الجديد سحابياً...</span>
+        </div>
+      )}
+
+      {/* Global Elegant Circular Progress Overlay */}
+      {globalProgress.active && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200" dir="rtl">
+          <div className="bg-white border border-slate-200/80 rounded-3xl p-8 max-w-xs w-full text-center space-y-6 shadow-2xl relative overflow-hidden">
+            {/* Glowing visual backdrop */}
+            <div className={`absolute top-0 right-0 w-32 h-32 ${
+              globalProgress.type === 'delete' ? 'bg-rose-500/10' : globalProgress.type === 'save' ? 'bg-amber-500/10' : 'bg-blue-500/10'
+            } rounded-full -mr-12 -mt-12 blur-xl opacity-60`}></div>
+            
+            <div className="flex flex-col items-center space-y-4">
+              {/* Circular Progress Design */}
+              <div className="relative flex items-center justify-center">
+                {/* Pulsing ring */}
+                <div className={`absolute inset-0 rounded-full animate-ping opacity-10 filter blur-xs ${
+                  globalProgress.type === 'delete' ? 'bg-rose-500' : globalProgress.type === 'save' ? 'bg-amber-500' : 'bg-blue-500'
+                }`} style={{ margin: '-4px' }}></div>
+                
+                <svg className="animate-spin h-14 w-14" viewBox="0 0 48 48">
+                  {/* Background Track */}
+                  <circle className="opacity-10 stroke-slate-400" cx="24" cy="24" r="20" fill="none" strokeWidth="4" />
+                  {/* Spinning colored path */}
+                  <path 
+                    className={`opacity-95 ${
+                      globalProgress.type === 'delete' ? 'text-rose-600' : globalProgress.type === 'save' ? 'text-amber-500' : 'text-blue-600'
+                    }`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="4" 
+                    strokeLinecap="round"
+                    d="M 24,4 A 20,20 0 0,1 44,24" 
+                  />
+                </svg>
+                
+                <span className="absolute text-sm">
+                  {globalProgress.type === 'delete' ? '🗑️' : globalProgress.type === 'save' ? '💾' : '🔄'}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <h4 className="text-xs font-black text-slate-800 leading-relaxed">
+                  {globalProgress.label || "جاري معالجة طلبك..."}
+                </h4>
+                <p className="text-[10px] font-bold text-slate-400">
+                  يرجى الانتظار حتى اكتمال العملية بنجاح.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

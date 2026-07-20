@@ -60,6 +60,8 @@ interface AdminPanelProps {
   schoolName?: string;
   onSchoolNameChange?: (name: string) => void;
   isSavingSchoolName?: boolean;
+  globalProgress?: { active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string };
+  setGlobalProgress?: React.Dispatch<React.SetStateAction<{ active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string }>>;
 }
 
 const getTodayDateString = () => {
@@ -175,7 +177,9 @@ export default function AdminPanel({
   onTodayStatsChange,
   schoolName,
   onSchoolNameChange,
-  isSavingSchoolName = false
+  isSavingSchoolName = false,
+  globalProgress,
+  setGlobalProgress
 }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
   const [pin, setPin] = useState<string>("");
@@ -501,6 +505,9 @@ export default function AdminPanel({
       async () => {
         try {
           setStatsLoading(true);
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: true, type: "delete", label: "جاري حذف سجل الغياب سحابياً..." });
+          }
           const { db } = await import("../firebase");
           const { doc, getDoc, setDoc, deleteDoc } = await import("firebase/firestore");
           
@@ -510,6 +517,9 @@ export default function AdminPanel({
             await deleteDoc(docRef);
             showMessage("تم حذف سجل التحضير بنجاح!");
             await loadStatistics();
+            if (searchGradeId && searchClassId && searchDate) {
+              await loadSpecificAbsenceSearch(searchGradeId, searchClassId, searchDate);
+            }
             return;
           }
 
@@ -536,12 +546,18 @@ export default function AdminPanel({
             
             showMessage("تم حذف تسجيل الغياب بنجاح!");
             await loadStatistics();
+            if (searchGradeId && searchClassId && searchDate) {
+              await loadSpecificAbsenceSearch(searchGradeId, searchClassId, searchDate);
+            }
           }
         } catch (e) {
           console.error("Error deleting absence:", e);
           showMessage("حدث خطأ أثناء حذف الغياب", "error");
         } finally {
           setStatsLoading(false);
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -895,6 +911,9 @@ export default function AdminPanel({
             if (student) {
               results.push({
                 id: `${rec.id}-${stId}-abs`,
+                recordId: rec.id,
+                studentId: stId,
+                isAbsent: true,
                 studentName: student.name,
                 status: "غائب",
                 period: rec.period,
@@ -907,6 +926,9 @@ export default function AdminPanel({
             if (student) {
               results.push({
                 id: `${rec.id}-${stId}-late`,
+                recordId: rec.id,
+                studentId: stId,
+                isAbsent: false,
                 studentName: student.name,
                 status: "متأخر",
                 period: rec.period,
@@ -1023,9 +1045,13 @@ export default function AdminPanel({
     e.preventDefault();
     if (!newGradeName.trim()) return;
     setSubmitting(prev => ({ ...prev, addGrade: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الصف الدراسي الجديد سحابياً..." });
+    }
     try {
       const newId = await addGrade(newGradeName.trim());
       setGrades(prev => {
+        if (prev.some(g => g.id === newId)) return prev;
         const updated = [...prev, { id: newId, name: newGradeName.trim(), createdAt: Date.now() }];
         return updated.sort((a, b) => {
           const timeA = (a as any).createdAt || 0;
@@ -1042,6 +1068,9 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء إضافة الصف", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addGrade: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1051,6 +1080,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف ${name}؟ سيتم حذف جميع الفصول والطلاب التابعين له تلقائياً ولا يمكن التراجع عن هذا الإجراء.`,
       async () => {
         setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الصف وفصوله وطلابه...` });
+        }
         try {
           setGrades(prev => prev.filter(g => g.id !== id));
           setClasses(prev => prev.filter(c => c.gradeId !== id));
@@ -1065,6 +1097,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء الحذف", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1085,9 +1120,13 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addClass: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الفصل الدراسي الجديد سحابياً..." });
+    }
     try {
       const newId = await addClass(className, selectedGradeIdForClasses);
       setClasses(prev => {
+        if (prev.some(c => c.id === newId)) return prev;
         const updated = [...prev, { id: newId, name: className, gradeId: selectedGradeIdForClasses }];
         const getNumberFromName = (name: string): number => {
           const match = name.match(/\d+/);
@@ -1110,6 +1149,9 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء إضافة الفصل", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addClass: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1119,6 +1161,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف فصل ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
         setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الفصل الدراسي وطلابه...` });
+        }
         try {
           setClasses(prev => prev.filter(c => c.id !== id));
           setStudents(prev => prev.filter(s => s.classId !== id));
@@ -1129,6 +1174,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء الحذف", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1152,9 +1200,13 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addTeacher: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة المعلم الجديد سحابياً..." });
+    }
     try {
       const newId = await addTeacher(trimmedName);
       setTeachers(prev => {
+        if (prev.some(t => t.id === newId)) return prev;
         const updated = [...prev, { id: newId, name: trimmedName }];
         return updated.sort((a, b) => a.name.localeCompare(b.name, "ar"));
       });
@@ -1165,6 +1217,9 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء إضافة المعلم", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addTeacher: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1174,6 +1229,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف المعلم ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
         setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف المعلم ${name}...` });
+        }
         try {
           setSelectedTeacherIds(prev => prev.filter(tId => tId !== id));
           setTeachers(prev => prev.filter(t => t.id !== id));
@@ -1184,6 +1242,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء الحذف", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1214,9 +1275,15 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addStudent: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الطالب الجديد سحابياً..." });
+    }
     try {
       const newId = await addStudent(trimmedName, newStudentGradeId, newStudentClassId);
-      setStudents(prev => [...prev, { id: newId, name: trimmedName, gradeId: newStudentGradeId, classId: newStudentClassId }].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      setStudents(prev => {
+        if (prev.some(s => s.id === newId)) return prev;
+        return [...prev, { id: newId, name: trimmedName, gradeId: newStudentGradeId, classId: newStudentClassId }].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+      });
       setNewStudentName("");
       showMessage("تم إضافة الطالب بنجاح!");
       onRefreshData().catch(console.error);
@@ -1224,6 +1291,9 @@ export default function AdminPanel({
       showMessage("حدث خطأ أثناء إضافة الطالب", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addStudent: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1233,6 +1303,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف الطالب ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
         setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الطالب ${name}...` });
+        }
         try {
           setSelectedStudentIds(prev => prev.filter(sId => sId !== id));
           setStudents(prev => prev.filter(s => s.id !== id));
@@ -1243,6 +1316,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء الحذف", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1255,6 +1331,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف عدد ${selectedStudentIds.length} طالب دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
         setSubmitting(prev => ({ ...prev, deleteSelectedStudents: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف عدد ${selectedStudentIds.length} طالب مضاف سحابياً...` });
+        }
         try {
           const idsToDelete = [...selectedStudentIds];
           setSelectedStudentIds([]);
@@ -1268,6 +1347,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء حذف الطلاب", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, deleteSelectedStudents: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1280,6 +1362,9 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف عدد ${selectedTeacherIds.length} معلم دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
         setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: true }));
+        if (setGlobalProgress) {
+          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف عدد ${selectedTeacherIds.length} معلم مضاف سحابياً...` });
+        }
         try {
           const idsToDelete = [...selectedTeacherIds];
           setSelectedTeacherIds([]);
@@ -1293,6 +1378,9 @@ export default function AdminPanel({
           showMessage("حدث خطأ أثناء حذف المعلمين", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: false }));
+          if (setGlobalProgress) {
+            setGlobalProgress({ active: false, type: null, label: "" });
+          }
         }
       }
     );
@@ -1326,6 +1414,9 @@ export default function AdminPanel({
       return;
     }
     setSubmitting(prev => ({ ...prev, importStudents: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "import", label: `جاري استيراد ومعالجة عدد ${parsedStudentNames.length} طالب للفصل...` });
+    }
     try {
       setStatsLoading(true);
       
@@ -1389,6 +1480,9 @@ export default function AdminPanel({
     } finally {
       setStatsLoading(false);
       setSubmitting(prev => ({ ...prev, importStudents: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1418,6 +1512,9 @@ export default function AdminPanel({
       return;
     }
     setSubmitting(prev => ({ ...prev, importTeachers: true }));
+    if (setGlobalProgress) {
+      setGlobalProgress({ active: true, type: "import", label: `جاري استيراد ومعالجة عدد ${parsedTeacherNames.length} معلم للمدرسة...` });
+    }
     try {
       setStatsLoading(true);
       
@@ -1475,6 +1572,9 @@ export default function AdminPanel({
     } finally {
       setStatsLoading(false);
       setSubmitting(prev => ({ ...prev, importTeachers: false }));
+      if (setGlobalProgress) {
+        setGlobalProgress({ active: false, type: null, label: "" });
+      }
     }
   };
 
@@ -1645,7 +1745,7 @@ export default function AdminPanel({
           <div className="flex items-start gap-3.5">
             <span className="text-3xl mt-0.5 animate-bounce">🌱</span>
             <div>
-              <h3 className="text-sm font-black text-slate-800">مرحباً بك في منصة SmartTeacher الرقمية الحية!</h3>
+              <h3 className="text-sm font-black text-slate-800">مرحباً بك في منصة SmartSchool الرقمية الحية!</h3>
               <p className="text-3xs text-slate-500 font-bold mt-1 leading-relaxed">
                 لقد قمت بتسجيل الدخول بنجاح. قاعدة بياناتك الحالية فارغة تماماً ومستقلة لتضمن خصوصية تامة لسجلاتك. اتبع الخطوات التفاعلية أدناه لتهيئة مدرستك وبدء العمل في دقائق معدودة:
               </p>
@@ -1782,7 +1882,8 @@ export default function AdminPanel({
                             <tr>
                               <th className="py-1.5 px-2 text-right">وقت</th>
                               <th className="py-1.5 px-2 text-right">طالب</th>
-                              <th className="py-1.5 px-2 text-center">ح ص</th>
+                              <th className="py-1.5 px-1 text-center">حصة</th>
+                              <th className="py-1.5 px-1 text-center">فصل</th>
                               <th className="py-1.5 px-2 text-right">معلم</th>
                               {!isReadOnly && <th className="py-1.5 px-1.5 text-center">⚙️</th>}
                             </tr>
@@ -1790,7 +1891,7 @@ export default function AdminPanel({
                           <tbody className="divide-y divide-slate-100">
                             {gradeEntries.length === 0 ? (
                               <tr>
-                                <td colSpan={isReadOnly ? 4 : 5} className="py-12 text-center text-slate-400 font-black">
+                                <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 font-black">
                                   <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب مسجل</span>
                                 </td>
                               </tr>
@@ -1821,17 +1922,15 @@ export default function AdminPanel({
                                       )}
                                     </div>
                                   </td>
-                                  <td className="py-0.5 px-2 text-center">
-                                    <div className="flex items-center gap-1.5 justify-center" dir="rtl">
-                                      {/* Right in RTL (first in JSX): Period Badge 'ح' */}
-                                      <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
-                                        {getPeriodNum(entry.periodCode)}
-                                      </span>
-                                      {/* Left in RTL (second in JSX): Class/Section Badge 'ص' */}
-                                      <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
-                                        {getClassNum(entry.classCode)}
-                                      </span>
-                                    </div>
+                                  <td className="py-0.5 px-1 text-center">
+                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
+                                      {getPeriodNum(entry.periodCode)}
+                                    </span>
+                                  </td>
+                                  <td className="py-0.5 px-1 text-center">
+                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
+                                      {getClassNum(entry.classCode)}
+                                    </span>
                                   </td>
                                   <td className="py-0.5 px-2 text-slate-600 font-semibold text-[9.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
                                   {!isReadOnly && (
@@ -1918,12 +2017,13 @@ export default function AdminPanel({
                       <th className="py-2.5 px-4 text-right">الحالة</th>
                       <th className="py-2.5 px-4 text-right">الحصة</th>
                       <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
+                      {!isReadOnly && <th className="py-2.5 px-4 text-center">الاجراءات</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {searchAttendanceResult.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-12 text-center text-slate-400 font-extrabold">
+                        <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 font-extrabold">
                           لا توجد غيابات مسجلة لهذا الفصل في هذا التاريخ 👍
                         </td>
                       </tr>
@@ -1941,6 +2041,18 @@ export default function AdminPanel({
                           </td>
                           <td className="py-3 px-4 font-black text-slate-700">{entry.period}</td>
                           <td className="py-3 px-4 text-slate-500 font-bold">{entry.teacherName}</td>
+                          {!isReadOnly && (
+                            <td className="py-3 px-4 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                title="حذف هذا تسجيل الغياب"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       ))
                     )}
@@ -2440,25 +2552,21 @@ export default function AdminPanel({
                   <button
                     type="submit"
                     disabled={submitting.addGrade}
-                    className={`relative overflow-hidden bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 whitespace-nowrap transition-all duration-300 ${
+                    className={`relative overflow-hidden bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 whitespace-nowrap transition-all duration-300 ${
                       submitting.addGrade 
-                        ? "ring-4 ring-blue-200/80 scale-95 shadow-md" 
-                        : "hover:scale-101"
+                        ? "ring-4 ring-blue-100 scale-95 opacity-80" 
+                        : "hover:scale-102 hover:shadow-md active:scale-98"
                     }`}
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>إضافة صف</span>
-
-                    {submitting.addGrade && (
-                      <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
-                        <div className="relative flex items-center justify-center">
-                          {/* Beautiful concentric spinning rings */}
-                          <div className="absolute w-6.5 h-6.5 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        </div>
-                        <span className="text-3xs font-extrabold animate-pulse">جاري الإضافة...</span>
-                      </div>
+                    {submitting.addGrade ? (
+                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    ) : (
+                      <Plus className="w-3.5 h-3.5" />
                     )}
+                    <span>{submitting.addGrade ? "جاري الإضافة..." : "إضافة صف"}</span>
                   </button>
                 </form>
 
@@ -2550,25 +2658,21 @@ export default function AdminPanel({
                       type="button"
                       onClick={handleAddClassSequence}
                       disabled={submitting.addClass}
-                      className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
+                      className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
                         submitting.addClass
-                          ? "ring-4 ring-blue-200/80 scale-95 shadow-md"
-                          : "hover:scale-101"
+                          ? "ring-4 ring-blue-100 scale-95 opacity-80"
+                          : "hover:scale-102 hover:shadow-md active:scale-98"
                       }`}
                     >
-                      <Plus className="w-4 h-4" />
-                      <span>إضافة "الفصل {selectedClassNumber}" للصف الدراسي</span>
-
-                      {submitting.addClass && (
-                        <div className="absolute inset-0 bg-blue-600 rounded-xl flex items-center justify-center gap-2 text-white">
-                          <div className="relative flex items-center justify-center">
-                            {/* Beautiful concentric spinning rings */}
-                            <div className="absolute w-7 h-7 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
-                            <div className="w-4.5 h-4.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          </div>
-                          <span className="text-xs font-bold animate-pulse">جاري إضافة الفصل...</span>
-                        </div>
+                      {submitting.addClass ? (
+                        <svg className="animate-spin h-4.5 w-4.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      ) : (
+                        <Plus className="w-4 h-4" />
                       )}
+                      <span>{submitting.addClass ? "جاري إضافة الفصل..." : `إضافة "الفصل ${selectedClassNumber}" للصف الدراسي`}</span>
                     </button>
 
                     {/* Classes list of current selected grade */}
