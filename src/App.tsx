@@ -18,6 +18,7 @@ import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
 import AdminPanel from "./components/AdminPanel";
 import SuperAdminPanel from "./components/SuperAdminPanel";
+import TourGuide from "./components/TourGuide";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
 import { 
@@ -91,6 +92,9 @@ export default function App() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Onboarding Interactive Tour State
+  const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
 
   // Responsive Navigation States
   const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only" | "super-admin">(getInitialMode());
@@ -376,6 +380,18 @@ export default function App() {
       setIsSavingSchoolName(false);
     }
   };
+
+  // Auto start interactive tour for new users on their first visit
+  useEffect(() => {
+    if (currentUser && !loading && schoolName && appMode !== "stats-only") {
+      const key = `tour_completed_${currentUser.email?.toLowerCase()}`;
+      const completed = localStorage.getItem(key);
+      if (!completed) {
+        setIsTourOpen(true);
+        localStorage.setItem(key, "true");
+      }
+    }
+  }, [currentUser, loading, schoolName, appMode]);
 
   // Synchronize app mode with URL routing
   useEffect(() => {
@@ -674,7 +690,7 @@ export default function App() {
         {/* School Logo Shield */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-5">
           <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-tr from-blue-600 to-indigo-700 p-2.5 rounded-xl text-white font-extrabold text-lg shadow-md shadow-blue-900/30">
+            <div id="sidebar-school-logo" className="bg-gradient-to-tr from-blue-600 to-indigo-700 p-2.5 rounded-xl text-white font-extrabold text-lg shadow-md shadow-blue-900/30">
               🏫
             </div>
             <div>
@@ -722,6 +738,7 @@ export default function App() {
                   ) : (
                     <button
                       type="button"
+                      id="btn-edit-school"
                       onClick={() => {
                         setSidebarSchoolInput(schoolName || "");
                         setIsEditingSidebarSchool(true);
@@ -788,6 +805,7 @@ export default function App() {
                           )}
                           <button
                             onClick={() => handleMenuItemClick(item.mode, item.tab)}
+                            id={`sidebar-${item.id}`}
                             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
                               active
                                 ? "bg-blue-600 text-white shadow-md shadow-blue-600/10"
@@ -817,6 +835,7 @@ export default function App() {
                             <div className="px-1">
                               <button
                                 type="button"
+                                id="btn-copy-stats-link"
                                 onClick={handleCopyStatsLink}
                                 className="w-full flex items-center justify-between gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-extrabold bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/20 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer"
                                 title="نسخ رابط صفحة متابعة الغياب والسلوك لمشاركتها مباشرة"
@@ -1087,6 +1106,18 @@ export default function App() {
 
               {/* Live indicators / Date info */}
               <div className="flex items-center gap-2 md:gap-4 text-slate-500 text-2xs font-extrabold">
+                {currentUser && appMode !== "stats-only" && (
+                  <button
+                    type="button"
+                    onClick={() => setIsTourOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl transition-all duration-200 shadow-sm hover:shadow active:scale-95 text-xs border border-amber-300 cursor-pointer"
+                    title="بدء الجولة الإرشادية للتطبيق"
+                  >
+                    <span className="animate-pulse">💡</span>
+                    <span>جولة إرشادية</span>
+                  </button>
+                )}
+
                 {/* Integrated Statistics Pills to free up screen space below */}
                 <div className="flex items-center gap-1.5">
                   <div className="bg-rose-50 border border-rose-100 px-2.5 py-1.5 rounded-xl text-rose-700 flex items-center gap-1 shadow-3xs transition hover:bg-rose-100/30">
@@ -1324,6 +1355,17 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Interactive Onboarding Tour */}
+      <TourGuide
+        isOpen={isTourOpen}
+        onClose={() => setIsTourOpen(false)}
+        appMode={appMode}
+        setAppMode={setAppMode}
+        setAdminTab={setAdminTab}
+        setTeacherTab={setTeacherTab}
+        setIsSidebarOpen={setIsSidebarOpen}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { motion } from "motion/react";
 import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord } from "../types";
 import { 
   addGrade, 
@@ -1828,6 +1829,69 @@ export default function AdminPanel({
               <span>طباعة الملخص</span>
             </button>
           </div>
+
+          {/* Distinctive empty state warning window with motion effects */}
+          {isReadOnly && (classes.length === 0 && grades.length === 0) && (
+            <motion.div
+              initial={{ opacity: 0, y: 15, scale: 0.95 }}
+              animate={{ 
+                opacity: 1, 
+                y: 0, 
+                scale: 1,
+                boxShadow: [
+                  "0px 4px 12px rgba(245, 158, 11, 0.1)",
+                  "0px 4px 24px rgba(245, 158, 11, 0.25)",
+                  "0px 4px 12px rgba(245, 158, 11, 0.1)"
+                ]
+              }}
+              transition={{ 
+                duration: 0.7,
+                ease: "easeOut",
+                boxShadow: {
+                  repeat: Infinity,
+                  duration: 2.5,
+                  ease: "easeInOut"
+                }
+              }}
+              className="relative overflow-hidden bg-gradient-to-r from-amber-500/10 via-rose-500/5 to-amber-500/10 border-2 border-dashed border-amber-500/40 rounded-2xl p-6 md:p-8 text-center shadow-lg my-2"
+              dir="rtl"
+            >
+              {/* Glowing ambient blobs in the background */}
+              <div className="absolute -top-12 -left-12 w-36 h-36 bg-amber-400/15 rounded-full blur-2xl animate-pulse"></div>
+              <div className="absolute -bottom-12 -right-12 w-36 h-36 bg-rose-400/15 rounded-full blur-2xl animate-pulse"></div>
+              
+              <div className="flex flex-col items-center justify-center gap-4 relative z-10">
+                <motion.div 
+                  animate={{ 
+                    scale: [1, 1.15, 1],
+                    rotate: [0, 4, -4, 0]
+                  }}
+                  transition={{ 
+                    repeat: Infinity, 
+                    duration: 3,
+                    ease: "easeInOut"
+                  }}
+                  className="bg-gradient-to-br from-amber-500 to-rose-500 text-white p-4 rounded-2xl shadow-md shadow-amber-500/25 border border-amber-300/30"
+                >
+                  <Users className="w-7 h-7" />
+                </motion.div>
+                
+                <div className="space-y-2">
+                  <h4 className="text-sm md:text-base font-black text-amber-800 dark:text-amber-400 tracking-tight leading-tight">
+                    بانتظار المسؤول اضافة الفصول والطلاب
+                  </h4>
+                  <p className="text-[10px] md:text-xs text-slate-500 dark:text-slate-400 font-extrabold max-w-lg mx-auto leading-relaxed">
+                    يرجى من إدارة المدرسة تهيئة الهيكل الأكاديمي أولاً عن طريق تبويب الطلاب، لإضافة الصفوف، الفصول، وتغذية أسماء الطلاب لتفعيل كافة الإحصائيات الذكية والتقارير اليومية وتلوينها هنا تلقائياً.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                  <span className="text-[9px] text-amber-600 font-black uppercase tracking-wider">بانتظار التهيئة الأكاديمية</span>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* TAB CONTENT: DAILY ATTENDANCE (DYNAMIC COLUMNS FOR ALL GRADES) */}
           {activeStatsTab === "attendance" && (
