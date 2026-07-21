@@ -375,6 +375,8 @@ export default function AdminPanel({
   // Visual customizer states for Grades & Classes (screenshot matching)
   const [selectedGradeIdForClasses, setSelectedGradeIdForClasses] = useState<string>("");
   const [selectedClassNumber, setSelectedClassNumber] = useState<number>(1);
+  const [selectedClassNumbers, setSelectedClassNumbers] = useState<number[]>([1]);
+  const [newGradeClassNumbers, setNewGradeClassNumbers] = useState<number[]>([1]);
 
   // Addition methods / modes (Individual form vs attached file Excel)
   const [studentAddMode, setStudentAddMode] = useState<"individual" | "excel">("individual");
@@ -388,6 +390,25 @@ export default function AdminPanel({
     setHasClickedStudentSwitcher(false);
     setHasClickedTeacherSwitcher(false);
   }, [activeSubTab]);
+
+  useEffect(() => {
+    if (!selectedGradeIdForClasses) {
+      setSelectedClassNumbers([]);
+      return;
+    }
+    const gradeClasses = classes.filter(c => c.gradeId === selectedGradeIdForClasses);
+    if (gradeClasses.length > 0) {
+      const numbers = gradeClasses.map(c => {
+        const match = c.name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : null;
+      }).filter((num): num is number => num !== null);
+      
+      const uniqueNumbers = Array.from(new Set(numbers)).sort((a, b) => a - b);
+      setSelectedClassNumbers(uniqueNumbers);
+    } else {
+      setSelectedClassNumbers([]);
+    }
+  }, [selectedGradeIdForClasses, classes]);
 
   // Copy and Paste text state
   const [pastedStudentsText, setPastedStudentsText] = useState<string>("");
@@ -1047,13 +1068,15 @@ export default function AdminPanel({
     if (!newGradeName.trim()) return;
     setSubmitting(prev => ({ ...prev, addGrade: true }));
     if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الصف الدراسي الجديد سحابياً..." });
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الصف الدراسي والفصول المحددة سحابياً..." });
     }
     try {
-      const newId = await addGrade(newGradeName.trim());
+      const newGradeId = await addGrade(newGradeName.trim());
+      
+      // Update grades state first
       setGrades(prev => {
-        if (prev.some(g => g.id === newId)) return prev;
-        const updated = [...prev, { id: newId, name: newGradeName.trim(), createdAt: Date.now() }];
+        if (prev.some(g => g.id === newGradeId)) return prev;
+        const updated = [...prev, { id: newGradeId, name: newGradeName.trim(), createdAt: Date.now() }];
         return updated.sort((a, b) => {
           const timeA = (a as any).createdAt || 0;
           const timeB = (b as any).createdAt || 0;
@@ -1061,12 +1084,47 @@ export default function AdminPanel({
           return a.name.localeCompare(b.name, "ar");
         });
       });
+
+      // Now add the selected classes for this grade!
+      const newlyCreatedClasses: typeof classes = [];
+      if (newGradeClassNumbers.length > 0) {
+        for (const num of newGradeClassNumbers) {
+          const className = `الفصل ${num}`;
+          const newClassId = await addClass(className, newGradeId);
+          newlyCreatedClasses.push({ id: newClassId, name: className, gradeId: newGradeId });
+        }
+        
+        // Update classes state with strict deduplication
+        setClasses(prev => {
+          const newlyCreatedIds = newlyCreatedClasses.map(c => c.id);
+          const cleanPrev = prev.filter(c => !newlyCreatedIds.includes(c.id));
+          const updated = [...cleanPrev, ...newlyCreatedClasses];
+          const getNumberFromName = (name: string): number => {
+            const match = name.match(/\d+/);
+            return match ? parseInt(match[0], 10) : 999999;
+          };
+          return updated.sort((a, b) => {
+            const numA = getNumberFromName(a.name);
+            const numB = getNumberFromName(b.name);
+            if (numA !== numB) return numA - numB;
+            return a.name.localeCompare(b.name, "ar");
+          });
+        });
+      }
+
+      const addedGradeName = newGradeName.trim();
       setNewGradeName("");
-      setSelectedGradeIdForClasses(newId);
-      showMessage("تم إضافة الصف بنجاح!");
+      setNewGradeClassNumbers([1]); // Reset to default
+      setSelectedGradeIdForClasses(newGradeId);
+      
+      if (newGradeClassNumbers.length > 0) {
+        showMessage(`تم إضافة صف "${addedGradeName}" ومعه الفصول الدراسية بنجاح!`);
+      } else {
+        showMessage(`تم إضافة صف "${addedGradeName}" بنجاح!`);
+      }
       onRefreshData().catch(console.error);
     } catch (e) {
-      showMessage("حدث خطأ أثناء إضافة الصف", "error");
+      showMessage("حدث خطأ أثناء إضافة الصف وفصوله", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addGrade: false }));
       if (setGlobalProgress) {
@@ -1112,42 +1170,59 @@ export default function AdminPanel({
       showMessage("الرجاء اختيار صف دراسي أولاً لتثبيت الفصول عليه", "error");
       return;
     }
-    const className = `الفصل ${selectedClassNumber}`;
-    // Check if class already exists in this grade
-    const existsInGrade = classes.some(c => c.gradeId === selectedGradeIdForClasses && c.name === className);
-    if (existsInGrade) {
-      showMessage(`الفصل ${selectedClassNumber} مسجل مسبقاً في هذا الصف`, "error");
+    if (selectedClassNumbers.length === 0) {
+      showMessage("الرجاء تحديد فصل واحد على الأقل لإضافته", "error");
       return;
     }
 
     setSubmitting(prev => ({ ...prev, addClass: true }));
     if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الفصل الدراسي الجديد سحابياً..." });
+      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الفصول الدراسية المحددة سحابياً..." });
     }
     try {
-      const newId = await addClass(className, selectedGradeIdForClasses);
-      setClasses(prev => {
-        if (prev.some(c => c.id === newId)) return prev;
-        const updated = [...prev, { id: newId, name: className, gradeId: selectedGradeIdForClasses }];
-        const getNumberFromName = (name: string): number => {
-          const match = name.match(/\d+/);
-          return match ? parseInt(match[0], 10) : 999999;
-        };
-        return updated.sort((a, b) => {
-          const numA = getNumberFromName(a.name);
-          const numB = getNumberFromName(b.name);
-          if (numA !== numB) return numA - numB;
-          return a.name.localeCompare(b.name, "ar");
-        });
-      });
-      showMessage(`تم إضافة ${className} بنجاح!`);
-      // Auto advance class sequence number for ease of configuration
-      if (selectedClassNumber < 10) {
-        setSelectedClassNumber(prev => prev + 1);
+      let addedCount = 0;
+      let alreadyExistsCount = 0;
+      const updatedClasses = [...classes];
+
+      for (const num of selectedClassNumbers) {
+        const className = `الفصل ${num}`;
+        // Check if class already exists in this grade
+        const existsInGrade = updatedClasses.some(c => c.gradeId === selectedGradeIdForClasses && c.name === className);
+        if (existsInGrade) {
+          alreadyExistsCount++;
+          continue;
+        }
+
+        const newId = await addClass(className, selectedGradeIdForClasses);
+        if (!updatedClasses.some(c => c.id === newId)) {
+          updatedClasses.push({ id: newId, name: className, gradeId: selectedGradeIdForClasses });
+        }
+        addedCount++;
       }
+
+      const getNumberFromName = (name: string): number => {
+        const match = name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : 999999;
+      };
+
+      updatedClasses.sort((a, b) => {
+        const numA = getNumberFromName(a.name);
+        const numB = getNumberFromName(b.name);
+        if (numA !== numB) return numA - numB;
+        return a.name.localeCompare(b.name, "ar");
+      });
+
+      setClasses(updatedClasses);
+
+      if (addedCount > 0) {
+        showMessage(`تم إضافة ${addedCount} فصل بنجاح!`);
+      } else if (alreadyExistsCount > 0) {
+        showMessage("جميع الفصول المحددة مسجلة مسبقاً في هذا الصف", "error");
+      }
+
       onRefreshData().catch(console.error);
     } catch (e) {
-      showMessage("حدث خطأ أثناء إضافة الفصل", "error");
+      showMessage("حدث خطأ أثناء إضافة الفصول", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addClass: false }));
       if (setGlobalProgress) {
@@ -2604,22 +2679,77 @@ export default function AdminPanel({
                   </h3>
                 </div>
 
-                {/* Add Grade Subform */}
-                <form onSubmit={handleAddGradeSubmit} className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="مثال: الصف الأول..."
-                    value={newGradeName}
-                    onChange={(e) => setNewGradeName(e.target.value)}
-                    className="flex-1 bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none"
-                  />
+                {/* Add Grade Subform (Combined Grade & Classes) */}
+                <form onSubmit={handleAddGradeSubmit} className="space-y-4 bg-slate-50/50 border border-slate-100 rounded-2xl p-4">
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-extrabold text-slate-500">اسم الصف الدراسي الجديد:</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: الصف الأول..."
+                      value={newGradeName}
+                      onChange={(e) => setNewGradeName(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[10px] font-extrabold text-slate-500">الفصول الدراسية التابعة له:</label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setNewGradeClassNumbers([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}
+                          className="text-[9px] text-blue-600 hover:text-blue-700 font-extrabold"
+                        >
+                          تحديد الكل
+                        </button>
+                        <span className="text-slate-200 text-[9px]">|</span>
+                        <button
+                          type="button"
+                          onClick={() => setNewGradeClassNumbers([])}
+                          className="text-[9px] text-slate-500 hover:text-slate-600 font-extrabold"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => {
+                        const isSelected = newGradeClassNumbers.includes(num);
+                        return (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => {
+                              setNewGradeClassNumbers(prev => {
+                                if (prev.includes(num)) {
+                                  return prev.filter(n => n !== num);
+                                } else {
+                                  return [...prev, num].sort((a, b) => a - b);
+                                }
+                              });
+                            }}
+                            className={`py-1.5 rounded-lg text-3xs font-black border transition-all ${
+                              isSelected
+                                ? "bg-blue-600 text-white border-blue-600 shadow-3xs"
+                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                            }`}
+                          >
+                            فصل {num}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <button
                     type="submit"
-                    disabled={submitting.addGrade}
-                    className={`relative overflow-hidden bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 whitespace-nowrap transition-all duration-300 ${
+                    disabled={submitting.addGrade || !newGradeName.trim()}
+                    className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-black py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-300 ${
                       submitting.addGrade 
                         ? "ring-4 ring-blue-100 scale-95 opacity-80" 
-                        : "hover:scale-102 hover:shadow-md active:scale-98"
+                        : "hover:scale-101 hover:shadow-md active:scale-98"
                     }`}
                   >
                     {submitting.addGrade ? (
@@ -2630,7 +2760,7 @@ export default function AdminPanel({
                     ) : (
                       <Plus className="w-3.5 h-3.5" />
                     )}
-                    <span>{submitting.addGrade ? "جاري الإضافة..." : "إضافة صف"}</span>
+                    <span>{submitting.addGrade ? "جاري الحفظ..." : "حفظ الصف والفصول التابعة له"}</span>
                   </button>
                 </form>
 
@@ -2643,26 +2773,41 @@ export default function AdminPanel({
                       const gradeClassCount = classes.filter(c => c.gradeId === grade.id).length;
                       const gradeStudentCount = students.filter(s => s.gradeId === grade.id).length;
                       const isSelected = selectedGradeIdForClasses === grade.id;
+                      const gradeClasses = classes.filter(c => c.gradeId === grade.id);
 
                       return (
                         <div 
                           key={grade.id} 
                           onClick={() => setSelectedGradeIdForClasses(grade.id)}
-                          className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${
+                          className={`flex items-start justify-between p-3 rounded-xl border cursor-pointer transition ${
                             isSelected 
                               ? "bg-blue-50/50 border-blue-300 shadow-3xs" 
                               : "bg-slate-50/40 border-slate-100 hover:bg-slate-50"
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">🏫</span>
-                            <div>
+                          <div className="flex items-start gap-2 flex-1 min-w-0">
+                            <span className="text-lg mt-0.5">🏫</span>
+                            <div className="flex-1 min-w-0 text-right">
                               <p className="text-xs font-black text-slate-800">{grade.name}</p>
                               <p className="text-3xs text-slate-400 font-bold">{gradeClassCount} فصول • {gradeStudentCount} طالب</p>
+                              
+                              {/* Registered classes tags directly below the grade name */}
+                              {gradeClasses.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {gradeClasses.map(cls => (
+                                    <span 
+                                      key={cls.id} 
+                                      className="text-[10px] bg-white text-blue-600 border border-blue-100 font-bold px-2 py-0.5 rounded-lg shadow-3xs"
+                                    >
+                                      {cls.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-2 mr-2" onClick={e => e.stopPropagation()}>
                             <button
                               type="button"
                               onClick={() => handleDeleteGrade(grade.id, grade.name)}
@@ -2693,27 +2838,57 @@ export default function AdminPanel({
                       <h3 className="text-sm font-extrabold text-slate-800">
                         الفصول الدراسية لـ : <span className="text-blue-600 font-black">"{grades.find(g => g.id === selectedGradeIdForClasses)?.name}"</span>
                       </h3>
-                      <p className="text-3xs text-slate-400 font-bold mt-0.5">اختر رقم ترتيب الفصل لتثبيته تلقائياً على هذا الصف</p>
+                      <p className="text-3xs text-slate-400 font-bold mt-0.5">اختر الفصول المراد تسجيلها واضغط على زر الحفظ بالأسفل</p>
                     </div>
 
-                    {/* Sequence Sequence selection buttons (1 to 10 as in screenshot) */}
+                    {/* Multiple Class Selection buttons */}
                     <div className="space-y-3">
-                      <label className="block text-2xs font-extrabold text-slate-500">رقم ترتيب/تسلسل الفصل (تصاعدي):</label>
-                      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                      <div className="flex items-center justify-between">
+                        <label className="block text-2xs font-extrabold text-slate-500">تحديد الفصول الدراسية (اضغط للتحديد أو الإلغاء):</label>
+                        <div className="flex gap-2">
                           <button
-                            key={num}
                             type="button"
-                            onClick={() => setSelectedClassNumber(num)}
-                            className={`py-2 rounded-xl text-xs font-black border transition-all ${
-                              selectedClassNumber === num
-                                ? "bg-blue-600 text-white border-blue-600 shadow-3xs"
-                                : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                            }`}
+                            onClick={() => setSelectedClassNumbers([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}
+                            className="text-[10px] text-blue-600 hover:text-blue-700 font-extrabold"
                           >
-                            {num}
+                            تحديد الكل
                           </button>
-                        ))}
+                          <span className="text-slate-200">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedClassNumbers([])}
+                            className="text-[10px] text-slate-500 hover:text-slate-600 font-extrabold"
+                          >
+                            إلغاء التحديد
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => {
+                          const isSelected = selectedClassNumbers.includes(num);
+                          return (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => {
+                                setSelectedClassNumbers(prev => {
+                                  if (prev.includes(num)) {
+                                    return prev.filter(n => n !== num);
+                                  } else {
+                                    return [...prev, num].sort((a, b) => a - b);
+                                  }
+                                });
+                              }}
+                              className={`py-2 rounded-xl text-xs font-black border transition-all ${
+                                isSelected
+                                  ? "bg-blue-600 text-white border-blue-600 shadow-3xs"
+                                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              {num}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -2721,7 +2896,7 @@ export default function AdminPanel({
                     <button
                       type="button"
                       onClick={handleAddClassSequence}
-                      disabled={submitting.addClass}
+                      disabled={submitting.addClass || selectedClassNumbers.length === 0}
                       className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
                         submitting.addClass
                           ? "ring-4 ring-blue-100 scale-95 opacity-80"
@@ -2736,7 +2911,14 @@ export default function AdminPanel({
                       ) : (
                         <Plus className="w-4 h-4" />
                       )}
-                      <span>{submitting.addClass ? "جاري إضافة الفصل..." : `إضافة "الفصل ${selectedClassNumber}" للصف الدراسي`}</span>
+                      <span>
+                        {submitting.addClass 
+                          ? "جاري إضافة الفصول..." 
+                          : selectedClassNumbers.length === 0 
+                            ? "الرجاء تحديد الفصول أولاً" 
+                            : `إضافة الفصول الدراسية المختارة (${selectedClassNumbers.join(", ")})`
+                        }
+                      </span>
                     </button>
 
                     {/* Classes list of current selected grade */}
@@ -3790,29 +3972,44 @@ export default function AdminPanel({
                         const gradeClassCount = classes.filter(c => c.gradeId === grade.id).length;
                         const gradeStudentCount = students.filter(s => s.gradeId === grade.id).length;
                         const isSelected = selectedGradeIdForClasses === grade.id;
+                        const gradeClasses = classes.filter(c => c.gradeId === grade.id);
 
                         return (
                           <div 
                             key={grade.id} 
                             onClick={() => setSelectedGradeIdForClasses(grade.id)}
-                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${
+                            className={`flex items-start justify-between p-3 rounded-xl border cursor-pointer transition ${
                               isSelected 
                                 ? "bg-blue-50/50 border-blue-300 shadow-3xs" 
                                 : "bg-slate-50/40 border-slate-100 hover:bg-slate-50"
                             }`}
                           >
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">🏫</span>
-                              <div>
+                            <div className="flex items-start gap-2 flex-1 min-w-0">
+                              <span className="text-lg mt-0.5">🏫</span>
+                              <div className="flex-1 min-w-0 text-right">
                                 <p className="text-xs font-black text-slate-800">{grade.name}</p>
                                 <p className="text-3xs text-slate-400 font-bold">{gradeClassCount} فصول • {gradeStudentCount} طالب</p>
+                                
+                                {/* Registered classes tags directly below the grade name */}
+                                {gradeClasses.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-2">
+                                    {gradeClasses.map(cls => (
+                                      <span 
+                                        key={cls.id} 
+                                        className="text-[10px] bg-white text-blue-600 border border-blue-100 font-bold px-2 py-0.5 rounded-lg shadow-3xs"
+                                      >
+                                        {cls.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeleteGrade(grade.id, grade.name); }}
-                              className="text-rose-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition"
+                              className="text-rose-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition mr-2"
                               title="حذف الصف بكامل فصوله"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -3833,27 +4030,57 @@ export default function AdminPanel({
                         <h5 className="text-xs font-black text-slate-800">
                           الفصول الدراسية لـ : <span className="text-blue-600 font-black">"{grades.find(g => g.id === selectedGradeIdForClasses)?.name}"</span>
                         </h5>
-                        <p className="text-3xs text-slate-400 font-bold mt-0.5">اختر رقم ترتيب الفصل لتثبيته تلقائياً على هذا الصف</p>
+                        <p className="text-3xs text-slate-400 font-bold mt-0.5">اختر الفصول المراد تسجيلها واضغط على زر الحفظ بالأسفل</p>
                       </div>
 
-                      {/* Sequence selection buttons */}
+                      {/* Multiple Class Selection buttons */}
                       <div className="space-y-3">
-                        <label className="block text-3xs font-extrabold text-slate-500">رقم ترتيب/تسلسل الفصل (تصاعدي):</label>
-                        <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                        <div className="flex items-center justify-between">
+                          <label className="block text-3xs font-extrabold text-slate-500">تحديد الفصول الدراسية (اضغط للتحديد أو الإلغاء):</label>
+                          <div className="flex gap-2">
                             <button
-                              key={num}
                               type="button"
-                              onClick={() => setSelectedClassNumber(num)}
-                              className={`py-2 rounded-xl text-xs font-black border transition-all ${
-                                selectedClassNumber === num
-                                  ? "bg-blue-600 text-white border-blue-600 shadow-3xs"
-                                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                              }`}
+                              onClick={() => setSelectedClassNumbers([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}
+                              className="text-[10px] text-blue-600 hover:text-blue-700 font-extrabold"
                             >
-                              {num}
+                              تحديد الكل
                             </button>
-                          ))}
+                            <span className="text-slate-200">|</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedClassNumbers([])}
+                              className="text-[10px] text-slate-500 hover:text-slate-600 font-extrabold"
+                            >
+                              إلغاء التحديد
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => {
+                            const isSelected = selectedClassNumbers.includes(num);
+                            return (
+                              <button
+                                key={num}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedClassNumbers(prev => {
+                                    if (prev.includes(num)) {
+                                      return prev.filter(n => n !== num);
+                                    } else {
+                                      return [...prev, num].sort((a, b) => a - b);
+                                    }
+                                  });
+                                }}
+                                className={`py-2 rounded-xl text-xs font-black border transition-all ${
+                                  isSelected
+                                    ? "bg-blue-600 text-white border-blue-600 shadow-3xs"
+                                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                }`}
+                              >
+                                {num}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -3861,7 +4088,7 @@ export default function AdminPanel({
                       <button
                         type="button"
                         onClick={handleAddClassSequence}
-                        disabled={submitting.addClass}
+                        disabled={submitting.addClass || selectedClassNumbers.length === 0}
                         className={`relative overflow-hidden w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all duration-300 ${
                           currentStep === 4 ? "ring-4 ring-blue-500/50 border-2 border-white animate-pulse scale-102" : ""
                         } ${
@@ -3871,8 +4098,15 @@ export default function AdminPanel({
                         }`}
                       >
                         <Plus className="w-4 h-4" />
-                        <span>إضافة "الفصل {selectedClassNumber}" للصف الدراسي</span>
-                        {currentStep === 4 && !submitting.addClass && (
+                        <span>
+                          {submitting.addClass 
+                            ? "جاري إضافة الفصول..." 
+                            : selectedClassNumbers.length === 0 
+                              ? "الرجاء تحديد الفصول أولاً" 
+                              : `إضافة الفصول الدراسية المختارة (${selectedClassNumbers.join(", ")})`
+                          }
+                        </span>
+                        {currentStep === 4 && !submitting.addClass && selectedClassNumbers.length > 0 && (
                           <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
                             اضغط هنا 👈
                           </span>
@@ -3885,7 +4119,7 @@ export default function AdminPanel({
                               <div className="absolute w-7 h-7 border-2 border-dashed border-white/30 rounded-full animate-spin [animation-duration:3s]"></div>
                               <div className="w-4.5 h-4.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                             </div>
-                            <span className="text-xs font-bold animate-pulse">جاري إضافة الفصل...</span>
+                            <span className="text-xs font-bold animate-pulse">جاري إضافة الفصول...</span>
                           </div>
                         )}
                       </button>
