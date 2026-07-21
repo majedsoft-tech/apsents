@@ -40,6 +40,27 @@ export default function TourGuide({
   const [, setWindowSize] = useState({ width: 0, height: 0 });
   const tooltipRef = useRef<HTMLDivElement>(null);
 
+  const prevElementRef = useRef<HTMLElement | null>(null);
+  const originalStylesRef = useRef<{
+    position: string;
+    zIndex: string;
+    pointerEvents: string;
+    backgroundColor: string;
+  } | null>(null);
+
+  // Helper to safely clean up styles on the previously focused element
+  const cleanupPrevElement = () => {
+    if (prevElementRef.current && originalStylesRef.current) {
+      prevElementRef.current.style.position = originalStylesRef.current.position;
+      prevElementRef.current.style.zIndex = originalStylesRef.current.zIndex;
+      prevElementRef.current.style.pointerEvents = originalStylesRef.current.pointerEvents;
+      prevElementRef.current.style.backgroundColor = originalStylesRef.current.backgroundColor;
+      prevElementRef.current.classList.remove("tour-highlighted-element");
+    }
+    prevElementRef.current = null;
+    originalStylesRef.current = null;
+  };
+
   // Define the interactive onboarding steps
   const steps: TourStep[] = [
     {
@@ -77,25 +98,14 @@ export default function TourGuide({
       }
     },
     {
-      target: "#sidebar-attendance",
-      title: "بوابة رصد الغياب اليومي للمعلم 📋",
-      content: "من هنا يستطيع المعلم رصد حضور وغياب الطلاب بشكل يومي وبكبسة زر واحدة. يتم الحفظ بشكل فوري وسحابي آمن.",
+      target: "#btn-copy-teacher-link",
+      title: "بوابة المعلمين ونسخ رابط التحضير 🔗",
+      content: "من هنا يمكنك نسخ الرابط المباشر لبوابة تسجيل الغياب والسلوك وتوزيعه على المعلمين والمعلمات (عبر الواتساب مثلاً). سيمكنهم هذا الرابط من رصد غياب وسلوك طلابهم بشكل مباشر وسريع وبأعلى درجات الخصوصية والأمان دون الحاجة لتسجيل دخولهم للنظام.",
       placement: "left",
       onBeforeStep: () => {
         setIsSidebarOpen(true);
-        setAppMode("teacher");
-        setTeacherTab("attendance");
-      }
-    },
-    {
-      target: "#sidebar-behavior",
-      title: "بوابة رصد السلوك والمخالفات ⚠️",
-      content: "ليس فقط الغياب! يستطيع المعلم رصد أي مخالفات سلوكية أو تميز إيجابي للطلاب فوراً لتظهر في السجل العام للإدارة المدرسية.",
-      placement: "left",
-      onBeforeStep: () => {
-        setIsSidebarOpen(true);
-        setAppMode("teacher");
-        setTeacherTab("behavior");
+        setAppMode("admin");
+        setAdminTab("stats");
       }
     },
     {
@@ -124,9 +134,12 @@ export default function TourGuide({
 
   const currentStep = steps[currentStepIdx];
 
-  // Helper to calculate target element bounding rect
+  // Helper to calculate target element bounding rect and dynamically highlight it
   const updateTargetRect = async () => {
-    if (!isOpen || !currentStep) return;
+    if (!isOpen || !currentStep) {
+      cleanupPrevElement();
+      return;
+    }
 
     // Run action before step if any
     if (currentStep.onBeforeStep) {
@@ -135,7 +148,10 @@ export default function TourGuide({
 
     // Wait slightly for DOM render updates
     setTimeout(() => {
-      const element = document.querySelector(currentStep.target);
+      // Clean up previous element highlight first
+      cleanupPrevElement();
+
+      const element = document.querySelector(currentStep.target) as HTMLElement | null;
       if (element) {
         // Scroll target into view
         element.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -144,6 +160,34 @@ export default function TourGuide({
         setTimeout(() => {
           const rect = element.getBoundingClientRect();
           setTargetRect(rect);
+
+          // Save original styles
+          const computedStyle = window.getComputedStyle(element);
+          originalStylesRef.current = {
+            position: element.style.position || computedStyle.position,
+            zIndex: element.style.zIndex || computedStyle.zIndex,
+            pointerEvents: element.style.pointerEvents || computedStyle.pointerEvents,
+            backgroundColor: element.style.backgroundColor || computedStyle.backgroundColor,
+          };
+          prevElementRef.current = element;
+
+          // Elevate target element above the dimmed backdrop (backdrop zIndex is 9990)
+          const currentPosition = computedStyle.position;
+          if (currentPosition === "static" || !currentPosition) {
+            element.style.position = "relative";
+          }
+          element.style.zIndex = "9998";
+          
+          // Prevent dark backdrop from bleeding through elements with transparent backgrounds
+          const computedBg = computedStyle.backgroundColor;
+          const isTransparent = computedBg === "rgba(0, 0, 0, 0)" || computedBg === "transparent" || !computedBg;
+          if (isTransparent) {
+            const isDark = document.documentElement.classList.contains("dark") || document.body.classList.contains("dark");
+            element.style.backgroundColor = isDark ? "#0f172a" : "#ffffff";
+          }
+
+          // Apply styling indicator
+          element.classList.add("tour-highlighted-element");
         }, 300);
       } else {
         setTargetRect(null);
@@ -156,8 +200,16 @@ export default function TourGuide({
       updateTargetRect();
     } else {
       setTargetRect(null);
+      cleanupPrevElement();
     }
   }, [isOpen, currentStepIdx]);
+
+  // Clean up styles on unmount
+  useEffect(() => {
+    return () => {
+      cleanupPrevElement();
+    };
+  }, []);
 
   // Monitor window resize or scroll to keep tooltip positioned
   useEffect(() => {
@@ -264,11 +316,47 @@ export default function TourGuide({
 
   return (
     <div className="fixed inset-0 z-[9990] overflow-hidden text-right" dir="rtl">
-      {/* High-fidelity Dimmed Backdrop with clear spotlight holes */}
-      <div 
-        className="absolute inset-0 bg-slate-950/75 backdrop-blur-xs transition-opacity duration-300"
-        onClick={handleSkip}
-      />
+      {/* Dynamic styles to ensure the highlighted element stands out beautifully with glowing borders and smooth scaling */}
+      <style>{`
+        .tour-highlighted-element {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+          box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.5), 0 20px 25px -5px rgba(0, 0, 0, 0.15) !important;
+          transform: scale(1.015) !important;
+        }
+      `}</style>
+
+      {/* High-fidelity Dimmed Backdrop with an SVG cutout spotlight mask */}
+      <svg className="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300" style={{ zIndex: 9991 }}>
+        <defs>
+          <mask id="spotlight-mask">
+            {/* Everything white is fully visible (which means it will be covered by the dark backdrop) */}
+            <rect x="0" y="0" width="100%" height="100%" fill="white" />
+            {/* Everything black is fully transparent (which creates the cutout hole to reveal the element below) */}
+            {targetRect && (
+              <rect
+                x={targetRect.left - 4}
+                y={targetRect.top - 4}
+                width={targetRect.width + 8}
+                height={targetRect.height + 8}
+                rx="12"
+                ry="12"
+                fill="black"
+              />
+            )}
+          </mask>
+        </defs>
+        {/* The actual dark backdrop, masked with our spotlight cutout */}
+        <rect
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          fill="rgba(15, 23, 42, 0.75)"
+          mask="url(#spotlight-mask)"
+          className="pointer-events-auto cursor-pointer"
+          onClick={handleSkip}
+        />
+      </svg>
 
       {/* Spotlight Effect Box on target element */}
       {targetRect && (

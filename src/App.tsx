@@ -59,7 +59,37 @@ function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" {
   if (path.includes("/teacher") || hash.includes("teacher") || search.includes("page=teacher") || search.includes("teacher")) {
     return "teacher";
   }
+  if (path.includes("/admin") || hash.includes("admin") || search.includes("page=admin") || search.includes("admin")) {
+    return "admin";
+  }
+
+  // If no explicit route in URL, check localStorage
+  const savedMode = localStorage.getItem("last_app_mode");
+  if (savedMode === "teacher" || savedMode === "admin" || savedMode === "stats-only" || savedMode === "super-admin") {
+    return savedMode as any;
+  }
+  
   return "admin"; // Default homepage is now the Admin Dashboard (لوحة التحكم)
+}
+
+function getInitialTeacherTab(): "attendance" | "behavior" {
+  const searchParams = new URLSearchParams(window.location.search);
+  const tab = searchParams.get("tab");
+  if (tab === "attendance" || tab === "behavior") {
+    return tab;
+  }
+  const saved = localStorage.getItem("last_teacher_tab");
+  return (saved === "attendance" || saved === "behavior") ? (saved as any) : "attendance";
+}
+
+function getInitialAdminTab(): "stats" | "grades" | "teachers" | "students" {
+  const searchParams = new URLSearchParams(window.location.search);
+  const tab = searchParams.get("tab");
+  if (tab === "stats" || tab === "grades" || tab === "teachers" || tab === "students") {
+    return tab as any;
+  }
+  const saved = localStorage.getItem("last_admin_tab");
+  return (saved === "stats" || saved === "grades" || saved === "teachers" || saved === "students") ? (saved as any) : "stats";
 }
 
 export default function App() {
@@ -139,8 +169,8 @@ export default function App() {
 
   const [copied, setCopied] = useState<boolean>(false);
   const [teacherCopied, setTeacherCopied] = useState<boolean>(false);
-  const [teacherTab, setTeacherTab] = useState<"attendance" | "behavior">("attendance");
-  const [adminTab, setAdminTab] = useState<"stats" | "grades" | "teachers" | "students">("stats");
+  const [teacherTab, setTeacherTab] = useState<"attendance" | "behavior">(getInitialTeacherTab());
+  const [adminTab, setAdminTab] = useState<"stats" | "grades" | "teachers" | "students">(getInitialAdminTab());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [todayCounts, setTodayCounts] = useState<{ absentCount: number; behaviorCount: number }>({ absentCount: 0, behaviorCount: 0 });
 
@@ -407,6 +437,67 @@ export default function App() {
     };
   }, []);
 
+  // Explicitly restore last saved mode and tabs from localStorage upon successful login
+  useEffect(() => {
+    if (currentUser) {
+      const currentSearch = new URLSearchParams(window.location.search);
+      const hasPageParam = currentSearch.has("page");
+      const hasTabParam = currentSearch.has("tab");
+
+      // Only restore from localStorage if there are no explicit URL query parameters (direct links)
+      if (!hasPageParam && !hasTabParam) {
+        const savedMode = localStorage.getItem("last_app_mode");
+        if (savedMode === "teacher" || savedMode === "admin" || savedMode === "stats-only" || savedMode === "super-admin") {
+          setAppMode(savedMode as any);
+        }
+        
+        const savedTeacherTab = localStorage.getItem("last_teacher_tab");
+        if (savedTeacherTab === "attendance" || savedTeacherTab === "behavior") {
+          setTeacherTab(savedTeacherTab as any);
+        }
+        
+        const savedAdminTab = localStorage.getItem("last_admin_tab");
+        if (savedAdminTab === "stats" || savedAdminTab === "grades" || savedAdminTab === "teachers" || savedAdminTab === "students") {
+          setAdminTab(savedAdminTab as any);
+        }
+      }
+    }
+  }, [currentUser]);
+
+  // Persist current mode and tabs to localStorage & keep URL state in perfect sync
+  useEffect(() => {
+    if (authChecking || !currentUser) return; // Only sync and persist when successfully logged in!
+
+    if (appMode) {
+      localStorage.setItem("last_app_mode", appMode);
+    }
+    if (teacherTab) {
+      localStorage.setItem("last_teacher_tab", teacherTab);
+    }
+    if (adminTab) {
+      localStorage.setItem("last_admin_tab", adminTab);
+    }
+
+    const currentSearch = new URLSearchParams(window.location.search);
+    const currentPage = currentSearch.get("page");
+    const currentTab = currentSearch.get("tab");
+
+    let expectedPage = "admin";
+    if (appMode === "super-admin") expectedPage = "super-admin";
+    else if (appMode === "stats-only") expectedPage = "stats-only";
+    else if (appMode === "teacher") expectedPage = "teacher";
+
+    const expectedTab = appMode === "teacher" ? teacherTab : adminTab;
+
+    if (currentPage !== expectedPage || currentTab !== expectedTab) {
+      const newPath = appMode === "admin" ? "/admin" : appMode === "super-admin" ? "/super-admin" : appMode === "stats-only" ? "/" : "/";
+      const newSearch = `?page=${expectedPage}&tab=${expectedTab}`;
+      const newHash = appMode === "admin" ? "#/admin" : appMode === "super-admin" ? "#/super-admin" : appMode === "stats-only" ? "#/stats-only" : "#/";
+      
+      window.history.replaceState({ mode: appMode }, "", `${newPath}${newSearch}${newHash}`);
+    }
+  }, [appMode, adminTab, teacherTab, authChecking, currentUser]);
+
   // Update browser tab title and dynamic favicon icon based on active mode/tab
   useEffect(() => {
     let title = schoolName ? `بوابة ${schoolName}` : "البوابة الرقمية للرصد والمتابعة";
@@ -532,18 +623,24 @@ export default function App() {
           {/* 3-point description of the application */}
           <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-4 text-right space-y-3">
             <h4 className="text-2xs font-extrabold text-blue-400 uppercase tracking-wide mb-1">🔍 كيف يعمل النظام؟</h4>
-            <ul className="text-3xs text-slate-300 space-y-2 font-bold">
+            <ul className="text-[10px] sm:text-[11px] text-slate-300 space-y-2.5 font-semibold">
               <li className="flex items-start gap-2">
-                <span className="text-blue-500 mt-0.5">•</span>
-                <span><strong className="text-slate-200">رصد غياب وسلوك الطلاب:</strong> تسجيل الحضور والغياب اليومي ورصد السلوكيات والمخالفات للفصول بضغطة زر.</span>
+                <span className="text-blue-500 mt-0.5 text-xs">•</span>
+                <span className="leading-relaxed">
+                  <strong className="text-slate-100 font-bold">رابط خاص للمعلمين:</strong> تسجيل غياب الطلاب عن الحصص ورصد الملاحظات السلوكية والمخالفات بشكل مباشر وسهل.
+                </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-500 mt-0.5">•</span>
-                <span><strong className="text-slate-200">إحصائيات وتقارير ذكية:</strong> لوحة تحكم تفاعلية توضح نسب الغياب ومستوى الانضباط العام والمؤشرات البيانية.</span>
+                <span className="text-blue-500 mt-0.5 text-xs">•</span>
+                <span className="leading-relaxed">
+                  <strong className="text-slate-100 font-bold">متابعة الإدارة والمسؤول:</strong> تقوم الإدارة والمسؤول عن الغياب بمتابعة الغياب والملاحظات السلوكية واتخاذ الإجراءات اللازمة.
+                </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-blue-500 mt-0.5">•</span>
-                <span><strong className="text-slate-200">مزامنة سحابية فورية:</strong> حفظ البيانات بشكل مباشر وتلقائي في قاعدة البيانات للرجوع إليها بأمان في أي وقت.</span>
+                <span className="text-blue-500 mt-0.5 text-xs">•</span>
+                <span className="leading-relaxed">
+                  <strong className="text-slate-100 font-bold">إحصائيات وتقارير ذكية:</strong> لوحة تحكم تفاعلية توضح نسب الغياب ومستوى الانضباط العام والمؤشرات البيانية (خاصة بالإدارة).
+                </span>
               </li>
             </ul>
           </div>
@@ -730,7 +827,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <p className="text-3xs text-slate-300 font-extrabold max-w-[110px] truncate">{schoolName || "لم يتم تسجيل اسم المدرسة"}</p>
+                  <p className="text-[10px] text-slate-300 font-extrabold max-w-[110px] truncate">{schoolName || "لم يتم تسجيل اسم المدرسة"}</p>
                   {isSavingSchoolName ? (
                     <div className="p-1 bg-slate-900 border border-slate-800 rounded-md flex items-center justify-center shadow-xs" title="جاري الحفظ...">
                       <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
@@ -859,6 +956,7 @@ export default function App() {
                         {isStats && (
                           <>
                             <div 
+                              id="sidebar-teacher-portal-container"
                               className="bg-slate-950/50 rounded-xl p-2 border-2 border-purple-500/65 shadow-lg shadow-purple-500/5 space-y-2 relative overflow-hidden mt-2"
                             >
                               <div className="absolute top-0 right-0 h-full w-1 bg-purple-500/60"></div>
@@ -882,6 +980,7 @@ export default function App() {
                               <div className="px-1">
                                 <button
                                   type="button"
+                                  id="btn-copy-teacher-link"
                                   onClick={handleCopyTeacherLink}
                                   className="w-full flex items-center justify-between gap-1 text-[10px] text-purple-400 hover:text-purple-300 font-extrabold bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/20 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer"
                                   title="نسخ رابط تسجيل الغياب للمعلمين لمشاركته مباشرة"

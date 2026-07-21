@@ -4,6 +4,8 @@
 @theme {
   --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-size-2xs: 0.65rem;
+  --font-size-3xs: 0.55rem;
 }
 
 body {
