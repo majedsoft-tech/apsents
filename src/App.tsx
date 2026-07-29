@@ -135,7 +135,7 @@ export default function App() {
     }
   }, [appMode]);
 
-  const showSidebar = appMode === "admin" || appMode === "super-admin" || appMode === "stats-only" || (appMode === "teacher" && !isDirectTeacherLink);
+  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink);
   const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
 
   // Ref for header height measurement
@@ -431,7 +431,7 @@ export default function App() {
 
   const handleCopyStatsLink = () => {
     const ownerId = currentUser?.uid || "";
-    const statsLink = `${window.location.origin}${window.location.pathname}?page=admin&tab=stats${ownerId ? `&owner=${ownerId}` : ""}`;
+    const statsLink = `${window.location.origin}${window.location.pathname}?page=stats-only${ownerId ? `&owner=${ownerId}` : ""}`;
     navigator.clipboard.writeText(statsLink).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
