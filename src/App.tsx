@@ -135,7 +135,7 @@ export default function App() {
     }
   }, [appMode]);
 
-  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink);
+  const showSidebar = appMode === "admin" || appMode === "super-admin" || appMode === "stats-only" || (appMode === "teacher" && !isDirectTeacherLink);
   const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
 
   // Ref for header height measurement
@@ -214,8 +214,11 @@ export default function App() {
         setActiveUser(user);
         localStorage.removeItem("guest_user_session");
         setAuthChecking(false);
-        setAppMode("admin");
-        setAdminTab("stats");
+        const searchParams = new URLSearchParams(window.location.search);
+        if (!searchParams.has("page")) {
+          setAppMode("admin");
+          setAdminTab("stats");
+        }
       } else {
         if (isPublicRoute || ownerParam) {
           const guestUser = {
@@ -428,7 +431,7 @@ export default function App() {
 
   const handleCopyStatsLink = () => {
     const ownerId = currentUser?.uid || "";
-    const statsLink = `${window.location.origin}${window.location.pathname}?page=stats-only${ownerId ? `&owner=${ownerId}` : ""}`;
+    const statsLink = `${window.location.origin}${window.location.pathname}?page=admin&tab=stats${ownerId ? `&owner=${ownerId}` : ""}`;
     navigator.clipboard.writeText(statsLink).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -439,7 +442,7 @@ export default function App() {
 
   const handleCopyTeacherLink = () => {
     const ownerId = currentUser?.uid || "";
-    const teacherLink = `${window.location.origin}${window.location.pathname}?page=teacher${ownerId ? `&owner=${ownerId}` : ""}`;
+    const teacherLink = `${window.location.origin}${window.location.pathname}?page=teacher&tab=attendance${ownerId ? `&owner=${ownerId}` : ""}`;
     navigator.clipboard.writeText(teacherLink).then(() => {
       setTeacherCopied(true);
       setTimeout(() => setTeacherCopied(false), 2000);
@@ -493,11 +496,14 @@ export default function App() {
     };
   }, []);
 
-  // Direct to Admin Stats Dashboard (بوابة متابعة الغياب والسلوك) on login
+  // Direct to Admin Stats Dashboard (بوابة متابعة الغياب والسلوك) on initial login if no explicit page param
   useEffect(() => {
     if (currentUser) {
-      setAppMode("admin");
-      setAdminTab("stats");
+      const searchParams = new URLSearchParams(window.location.search);
+      if (!searchParams.has("page")) {
+        setAppMode("admin");
+        setAdminTab("stats");
+      }
     }
   }, [currentUser]);
 
@@ -729,8 +735,11 @@ export default function App() {
               setLoginError(null);
               try {
                 await signInWithPopup(auth, googleProvider);
-                setAppMode("admin");
-                setAdminTab("stats");
+                const searchParams = new URLSearchParams(window.location.search);
+                if (!searchParams.has("page")) {
+                  setAppMode("admin");
+                  setAdminTab("stats");
+                }
               } catch (err: any) {
                 console.error("Google Sign-In Error:", err);
                 if (err?.code === "auth/unauthorized-domain" || err?.message?.includes("unauthorized-domain")) {
