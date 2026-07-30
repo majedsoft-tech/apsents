@@ -1119,14 +1119,7 @@ export default function App() {
           </button>
         </div>
 
-        {appMode === "teacher" && (
-          <button
-            onClick={() => navigateTo("admin")}
-            className="w-full flex items-center justify-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 hover:text-slate-900 rounded-xl text-3xs font-black transition-all transform hover:translate-y-[-1px] cursor-pointer"
-          >
-            <span>🛡️ الانتقال للوحة التحكم (Admin)</span>
-          </button>
-        )}
+
         
         {/* Footer info: Make design smaller and copyright more clear */}
         <div className="text-center space-y-0.5 pt-1">

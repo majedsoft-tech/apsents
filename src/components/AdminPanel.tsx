@@ -380,7 +380,7 @@ export default function AdminPanel({
 
   // Addition methods / modes (Individual form vs attached file Excel)
   const [studentAddMode, setStudentAddMode] = useState<"individual" | "excel">("individual");
-  const [teacherAddMode, setTeacherAddMode] = useState<"individual" | "excel">("individual");
+  const [teacherAddMode, setTeacherAddMode] = useState<"individual" | "excel">("excel");
   const [gradesAddMode, setGradesAddMode] = useState<"individual" | "excel">("individual");
 
   const [hasClickedStudentSwitcher, setHasClickedStudentSwitcher] = useState<boolean>(false);
@@ -2767,22 +2767,26 @@ export default function AdminPanel({
                                       }
                                     }
                                   }}
-                                  className="flex flex-col rounded-xl overflow-hidden border border-indigo-200/80 transition-all shadow-3xs cursor-pointer hover:scale-104 active:scale-96"
+                                  className={`flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
+                                    exists
+                                      ? "border-indigo-600"
+                                      : "border-indigo-200 hover:border-indigo-300"
+                                  }`}
                                 >
                                   {/* Upper Box */}
                                   <div
-                                    className={`py-1.5 text-center text-xs sm:text-sm font-black flex items-center justify-center gap-0.5 ${
+                                    className={`py-2 px-1 text-center text-sm sm:text-base font-black flex items-center justify-center gap-1 ${
                                       exists
                                         ? "bg-[#5046e5] text-white"
-                                        : "bg-white text-indigo-600 hover:bg-indigo-50"
+                                        : "bg-white text-indigo-600 hover:bg-indigo-50/70"
                                     }`}
                                   >
+                                    <span>{exists ? "✓" : "+"}</span>
                                     <span>{num}</span>
-                                    <span className="text-[10px]">{exists ? "✓" : "+"}</span>
                                   </div>
 
                                   {/* Lower Box */}
-                                  <div className="bg-rose-50/90 text-rose-600 text-[9.5px] font-bold py-0.5 border-t border-indigo-100 text-center whitespace-nowrap">
+                                  <div className="bg-[#fff1f2] text-rose-600 text-xs sm:text-[12.5px] font-extrabold py-1 border-t border-rose-100/80 text-center whitespace-nowrap">
                                     {clsStudentCount} طالب
                                   </div>
                                 </button>
@@ -2849,42 +2853,12 @@ export default function AdminPanel({
               <p className="text-2xs text-slate-400 font-bold mt-0.5">تسجيل المعلمين المعتمدين لتخويلهم صلاحيات رصد الحضور والغياب والسلوك للطلاب.</p>
             </div>
             
-            {/* Mode Switcher */}
+            {/* Mode Indicator */}
             <div className="flex items-center gap-2">
-              {currentStep === 7.5 && !hasClickedTeacherSwitcher && (
-                <span className="text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg animate-pulse">
-                  اختر أحد الخيارين 👈
-                </span>
-              )}
-              <div className={`flex bg-slate-100 p-0.5 rounded-lg border transition-all ${
-                currentStep === 7.5 && !hasClickedTeacherSwitcher
-                  ? "ring-4 ring-amber-400 border-white scale-102 animate-pulse"
-                  : "border-slate-200"
-              }`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTeacherAddMode("individual");
-                    setHasClickedTeacherSwitcher(true);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
-                    teacherAddMode === "individual" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <span>معلم فردي ✍️</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTeacherAddMode("excel");
-                    setHasClickedTeacherSwitcher(true);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1 ${
-                    teacherAddMode === "excel" ? "bg-white text-blue-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <span>نسخ ولصق الأسماء 📋</span>
-                </button>
+              <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <div className="px-3.5 py-1.5 rounded-md text-xs font-bold bg-white text-blue-600 shadow-3xs flex items-center gap-1">
+                  <span>إضافة المعلمين 📋</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2894,110 +2868,69 @@ export default function AdminPanel({
             <div className="lg:col-span-5 bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-4">
               <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5 border-b border-slate-50 pb-2">
                 <UserPlus className="w-4 h-4 text-blue-500" />
-                <span>إضافة كادر تعليمي جديد</span>
+                <span>إضافة المعلمين</span>
               </h3>
 
-              {teacherAddMode === "individual" ? (
-                <form onSubmit={handleAddTeacherSubmit} className="space-y-3">
-                  <div>
-                    <label className="block text-2xs font-extrabold text-slate-500 mb-1">اسم المعلم كاملاً</label>
-                    <input
-                      type="text"
-                      placeholder="مثال: أ/ ماجد عبد الله الناصر"
-                      value={newTeacherName}
-                      onChange={(e) => setNewTeacherName(e.target.value)}
-                      className={`w-full bg-slate-50 border rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none transition-all ${
-                        currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length === 0
-                          ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
-                          : "border-slate-200"
-                      }`}
-                    />
-                    {currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length === 0 && (
-                      <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى كتابة اسم المعلم هنا لتسجيله في المدرسة</p>
-                    )}
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={submitting.addTeacher}
-                    className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
-                      currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length > 0 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102" : ""
-                    }`}
-                  >
-                    {submitting.addTeacher ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Plus className="w-4 h-4" />
-                    )}
-                    <span>تسجيل المعلم في المدرسة</span>
-                    {currentStep === 7.5 && hasClickedTeacherSwitcher && newTeacherName.trim().length > 0 && (
-                      <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
-                        اضغط هنا 👈
-                      </span>
-                    )}
-                  </button>
-                </form>
-              ) : (
-                /* copy and paste card for teachers */
-                <form onSubmit={handleTeacherImportSubmit} className="space-y-3.5">
-                  <div>
-                    <label className="block text-2xs font-extrabold text-slate-500 mb-1.5">انسخ قائمة المعلمين من إكسل أو وورد وألصقها هنا:</label>
-                    <textarea
-                      rows={6}
-                      placeholder="ألصق الأسماء هنا...
+              {/* copy and paste card for teachers */}
+              <form onSubmit={handleTeacherImportSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-2xs font-extrabold text-slate-500 mb-1.5">اضف معلم أو مجموعة من المعلمين (يمكنك ايضا نسخ ولصق الاسماء من ملف اكسل)</label>
+                  <textarea
+                    rows={6}
+                    placeholder="ألصق الأسماء هنا...
 أ/ أحمد المحمد
 أ/ خالد الحربي
 أ/ علي الغامدي"
-                      value={pastedTeachersText}
-                      onChange={(e) => setPastedTeachersText(e.target.value)}
-                      className={`w-full bg-slate-50 border rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono transition-all ${
-                        currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0
-                          ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
-                          : "border-slate-200 focus:border-blue-500"
-                      }`}
-                    />
-                    {currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0 && (
-                      <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى لصق قائمة الأسماء هنا في المربع لبدء الاستيراد دفعة واحدة</p>
-                    )}
-                  </div>
-
-                  {parsedTeacherNames.length > 0 && (
-                    <div className="bg-blue-50/40 border border-blue-100 rounded-xl p-3.5 space-y-2">
-                      <p className="text-2xs font-extrabold text-blue-800 flex items-center gap-1">
-                        <Check className="w-3.5 h-3.5" />
-                        <span>تم اكتشاف {parsedTeacherNames.length} معلم جاهز للاستيراد:</span>
-                      </p>
-                      <div className="max-h-24 overflow-y-auto divide-y divide-blue-100/50 text-2xs text-slate-700 font-semibold pr-1">
-                        {parsedTeacherNames.slice(0, 5).map((name, i) => (
-                          <p key={i} className="py-1">👤 {name}</p>
-                        ))}
-                        {parsedTeacherNames.length > 5 && (
-                          <p className="py-1 text-slate-400 text-center text-3xs">...و {parsedTeacherNames.length - 5} معلمين آخرين</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={parsedTeacherNames.length === 0 || statsLoading || submitting.importTeachers}
-                    className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
-                      currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102" : ""
+                    value={pastedTeachersText}
+                    onChange={(e) => setPastedTeachersText(e.target.value)}
+                    className={`w-full bg-slate-50 border rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono transition-all ${
+                      currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0
+                        ? "border-amber-400 focus:border-amber-500 ring-4 ring-amber-100 scale-101"
+                        : "border-slate-200 focus:border-blue-500"
                     }`}
-                  >
-                    {submitting.importTeachers ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Plus className="w-4 h-4" />
-                    )}
-                    <span>اعتماد واستيراد {parsedTeacherNames.length} معلم دفعة واحدة 📋</span>
-                    {currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 && (
-                      <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
-                        اضغط هنا 👈
-                      </span>
-                    )}
-                  </button>
-                </form>
-              )}
+                  />
+                  {currentStep === 7.5 && hasClickedTeacherSwitcher && pastedTeachersText.trim().length === 0 && (
+                    <p className="text-[10px] text-amber-700 font-black mt-1 animate-pulse">👈 يرجى لصق قائمة الأسماء هنا في المربع لبدء الاستيراد دفعة واحدة</p>
+                  )}
+                </div>
+
+                {parsedTeacherNames.length > 0 && (
+                  <div className="bg-blue-50/40 border border-blue-100 rounded-xl p-3.5 space-y-2">
+                    <p className="text-2xs font-extrabold text-blue-800 flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>تم اكتشاف {parsedTeacherNames.length} معلم جاهز للاستيراد:</span>
+                    </p>
+                    <div className="max-h-24 overflow-y-auto divide-y divide-blue-100/50 text-2xs text-slate-700 font-semibold pr-1">
+                      {parsedTeacherNames.slice(0, 5).map((name, i) => (
+                        <p key={i} className="py-1">👤 {name}</p>
+                      ))}
+                      {parsedTeacherNames.length > 5 && (
+                        <p className="py-1 text-slate-400 text-center text-3xs">...و {parsedTeacherNames.length - 5} معلمين آخرين</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={parsedTeacherNames.length === 0 || statsLoading || submitting.importTeachers}
+                  className={`w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition-all ${
+                    currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 ? "ring-4 ring-amber-400 border-2 border-white animate-pulse scale-102" : ""
+                  }`}
+                >
+                  {submitting.importTeachers ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  <span>اعتماد واستيراد {parsedTeacherNames.length} معلم دفعة واحدة 📋</span>
+                  {currentStep === 7.5 && hasClickedTeacherSwitcher && parsedTeacherNames.length > 0 && (
+                    <span className="text-[9px] bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded font-black animate-bounce mr-1">
+                      اضغط هنا 👈
+                    </span>
+                  )}
+                </button>
+              </form>
             </div>
 
             {/* Registered Teachers List - 7 columns */}
@@ -3179,73 +3112,104 @@ export default function AdminPanel({
               </button>
             </div>
 
-            {/* Grades Selection Horizontal Pills */}
-            <div className="flex items-center gap-2.5 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-slate-200 flex-wrap">
-              {grades.map((grade, idx) => {
-                const isSelected = selectedGradeId === grade.id;
-                const gradeStudentCount = students.filter(s => s.gradeId === grade.id).length;
-
-                return (
-                  <button
-                    key={`mgrade-${grade.id}-${idx}`}
-                    type="button"
-                    onClick={() => setSelectedGradeId(grade.id)}
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                      isSelected
-                        ? "bg-[#5046e5] text-white shadow-md shadow-indigo-500/20"
-                        : "bg-white border border-slate-200/90 text-[#5046e5] hover:bg-slate-50 shadow-3xs"
-                    }`}
-                  >
-                    {isSelected && <Check className="w-4 h-4 text-white" />}
-                    <span>{grade.name}</span>
-                    <span className={`text-[10.5px] font-extrabold px-2 py-0.5 rounded-full ${
-                      isSelected
-                        ? "bg-white/20 text-white border border-white/30"
-                        : "bg-rose-50 text-rose-600 border border-rose-200/80"
-                    }`}>
-                      {gradeStudentCount} طالب
-                    </span>
-                  </button>
-                );
-              })}
-              {grades.length === 0 && (
-                <p className="text-2xs text-slate-400 font-extrabold py-1">لا توجد صفوف دراسية مسجلة حالياً. اضغط على زر "إضافة / تعديل الصفوف والفصول" لإضافة صف.</p>
-              )}
-            </div>
-
-            {/* Classes Buttons for Selected Grade */}
-            {selectedGradeId && (
-              <div className="pt-2 border-t border-slate-100 flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
-                {classes.filter(c => c.gradeId === selectedGradeId).map((cls, idx) => {
-                  const isSelected = selectedClassId === cls.id;
-                  const classNum = cls.name.replace("الفصل ", "").replace("فصل ", "");
-                  const classStudentCount = students.filter(s => s.classId === cls.id).length;
+            {/* Grades Selection Icon Cards */}
+            <div className="space-y-2">
+              <p className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                <span>الصفوف الدراسية (اختر الصف لعرض فصوله):</span>
+              </p>
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-slate-200 flex-wrap">
+                {grades.map((grade, idx) => {
+                  const isSelected = selectedGradeId === grade.id;
+                  const gradeStudentCount = students.filter(s => s.gradeId === grade.id).length;
 
                   return (
                     <button
-                      key={`mcls-${cls.id}-${idx}`}
+                      key={`mgrade-${grade.id}-${idx}`}
                       type="button"
-                      onClick={() => setSelectedClassId(cls.id)}
-                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                      onClick={() => {
+                        setSelectedGradeId(grade.id);
+                        const gradeClasses = classes.filter(c => c.gradeId === grade.id);
+                        if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
+                          setSelectedClassId(gradeClasses[0].id);
+                        }
+                      }}
+                      className={`flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 min-w-[100px] sm:min-w-[120px] ${
                         isSelected
-                          ? "bg-[#5046e5] text-white border-[#5046e5] shadow-md shadow-indigo-500/20"
-                          : "bg-white border-slate-200/90 text-slate-700 hover:bg-slate-50 shadow-3xs"
+                          ? "border-indigo-600 shadow-md shadow-indigo-500/20"
+                          : "border-indigo-200 hover:border-indigo-300"
                       }`}
                     >
-                      <span>{classNum || cls.name}</span>
-                      <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md ${
-                        isSelected
-                          ? "bg-white/20 text-white"
-                          : "bg-rose-50 text-rose-600 border border-rose-200/80"
-                      }`}>
-                        {classStudentCount} طالب
-                      </span>
+                      {/* Upper Box: Grade Name */}
+                      <div
+                        className={`py-2 px-3 text-center text-xs sm:text-sm font-black flex items-center justify-center gap-1.5 ${
+                          isSelected
+                            ? "bg-[#5046e5] text-white"
+                            : "bg-white text-indigo-600 hover:bg-indigo-50/70"
+                        }`}
+                      >
+                        <span>🏫</span>
+                        <span>{grade.name}</span>
+                      </div>
+
+                      {/* Lower Box: Student Count */}
+                      <div className="bg-[#fff1f2] text-rose-600 text-[11px] sm:text-xs font-extrabold py-1 px-2 border-t border-rose-100/80 text-center whitespace-nowrap">
+                        {gradeStudentCount} طالب
+                      </div>
                     </button>
                   );
                 })}
-                {classes.filter(c => c.gradeId === selectedGradeId).length === 0 && (
-                  <p className="text-2xs text-slate-400 font-extrabold py-1">لا توجد فصول تابعة لهذا الصف حالياً. أضف فصلاً عبر زر "إضافة / تعديل الصفوف والفصول".</p>
+                {grades.length === 0 && (
+                  <p className="text-2xs text-slate-400 font-extrabold py-1">لا توجد صفوف دراسية مسجلة حالياً. اضغط على زر "إضافة / تعديل الصفوف والفصول" لإضافة صف.</p>
                 )}
+              </div>
+            </div>
+
+            {/* Classes Icon Cards for Selected Grade */}
+            {selectedGradeId && (
+              <div className="pt-3 border-t border-slate-100 space-y-2 animate-fadeIn">
+                <p className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+                  <span className="text-[#5046e5]">فصول {grades.find(g => g.id === selectedGradeId)?.name}:</span>
+                </p>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
+                  {classes.filter(c => c.gradeId === selectedGradeId).map((cls, idx) => {
+                    const isSelected = selectedClassId === cls.id;
+                    const classNum = cls.name.replace("الفصل ", "").replace("فصل ", "");
+                    const classStudentCount = students.filter(s => s.classId === cls.id).length;
+
+                    return (
+                      <button
+                        key={`mcls-${cls.id}-${idx}`}
+                        type="button"
+                        onClick={() => setSelectedClassId(cls.id)}
+                        className={`flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 min-w-[70px] sm:min-w-[80px] ${
+                          isSelected
+                            ? "border-indigo-600 shadow-md shadow-indigo-500/20"
+                            : "border-indigo-200 hover:border-indigo-300"
+                        }`}
+                      >
+                        {/* Upper Box: Class Number */}
+                        <div
+                          className={`py-2 px-3 text-center text-xs sm:text-sm font-black flex items-center justify-center gap-1 ${
+                            isSelected
+                              ? "bg-[#5046e5] text-white"
+                              : "bg-white text-indigo-600 hover:bg-indigo-50/70"
+                          }`}
+                        >
+                          <span>{classNum || cls.name}</span>
+                        </div>
+
+                        {/* Lower Box: Student Count */}
+                        <div className="bg-[#fff1f2] text-rose-600 text-[11px] sm:text-xs font-extrabold py-1 px-1.5 border-t border-rose-100/80 text-center whitespace-nowrap">
+                          {classStudentCount} طالب
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {classes.filter(c => c.gradeId === selectedGradeId).length === 0 && (
+                    <p className="text-2xs text-slate-400 font-extrabold py-1">لا توجد فصول تابعة لهذا الصف حالياً. أضف فصلاً عبر زر "إضافة / تعديل الصفوف والفصول".</p>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -3472,29 +3436,6 @@ export default function AdminPanel({
                             <th className="py-3.5 px-4 border-l border-slate-200/50">اسم الطالب</th>
                             <th className="py-3.5 px-4 w-28 text-center border-l border-slate-200/50">الصف</th>
                             <th className="py-3.5 px-4 w-28 text-center border-l border-slate-200/50">الفصل</th>
-                            <th className="py-3.5 px-4 text-center border-l border-slate-200/50 min-w-[280px]">
-                              <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
-                                <span>كلمة المرور (مطلوبة)</span>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={handleAutoGeneratePasswords}
-                                    className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 font-extrabold px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                                    title="توليد كلمة مرور أرقام لكل طالب"
-                                  >
-                                    <span>🔑 توليد تلقائي سهل 🪄</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleClearAllPasswords}
-                                    className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 font-extrabold px-2.5 py-1 rounded-xl text-[11px] flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                                    title="مسح جميع كلمات مرور الفصل"
-                                  >
-                                    <span>🧼 مسح جميع الكلمات</span>
-                                  </button>
-                                </div>
-                              </div>
-                            </th>
                             <th className="py-3.5 px-4 w-24 text-center">
                               <div className="flex items-center justify-center gap-1.5">
                                 <input 
@@ -3527,17 +3468,6 @@ export default function AdminPanel({
                                 <td className="py-3 px-4 font-black text-slate-900 text-sm border-l border-slate-100">{st.name}</td>
                                 <td className="py-3 px-4 text-center text-slate-500 font-bold border-l border-slate-100">{studentGrade}</td>
                                 <td className="py-3 px-4 text-center text-slate-500 font-bold border-l border-slate-100">{studentClass}</td>
-                                <td className="py-3 px-4 text-center border-l border-slate-100">
-                                  <div className="relative max-w-[160px] mx-auto">
-                                    <input
-                                      type="text"
-                                      placeholder="أرقام فقط"
-                                      value={studentPasswords[st.id] || ""}
-                                      onChange={(e) => handleUpdatePassword(st.id, e.target.value)}
-                                      className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-1.5 text-center text-xs font-extrabold text-slate-800 placeholder:text-slate-300 focus:outline-none shadow-3xs"
-                                    />
-                                  </div>
-                                </td>
                                 <td className="py-3 px-4 text-center">
                                   <div className="flex items-center justify-center gap-3">
                                     <input 
@@ -3812,22 +3742,26 @@ export default function AdminPanel({
                                         }
                                       }
                                     }}
-                                    className="flex flex-col rounded-xl overflow-hidden border border-indigo-200/80 transition-all shadow-3xs cursor-pointer hover:scale-104 active:scale-96"
+                                    className={`flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
+                                      exists
+                                        ? "border-indigo-600"
+                                        : "border-indigo-200 hover:border-indigo-300"
+                                    }`}
                                   >
                                     {/* Upper Box */}
                                     <div
-                                      className={`py-1.5 text-center text-xs sm:text-sm font-black flex items-center justify-center gap-0.5 ${
+                                      className={`py-2 px-1 text-center text-sm sm:text-base font-black flex items-center justify-center gap-1 ${
                                         exists
                                           ? "bg-[#5046e5] text-white"
-                                          : "bg-white text-indigo-600 hover:bg-indigo-50"
+                                          : "bg-white text-indigo-600 hover:bg-indigo-50/70"
                                       }`}
                                     >
+                                      <span>{exists ? "✓" : "+"}</span>
                                       <span>{num}</span>
-                                      <span className="text-[10px]">{exists ? "✓" : "+"}</span>
                                     </div>
 
                                     {/* Lower Box */}
-                                    <div className="bg-rose-50/90 text-rose-600 text-[9.5px] font-bold py-0.5 border-t border-indigo-100 text-center whitespace-nowrap">
+                                    <div className="bg-[#fff1f2] text-rose-600 text-xs sm:text-[12.5px] font-extrabold py-1 border-t border-rose-100/80 text-center whitespace-nowrap">
                                       {clsStudentCount} طالب
                                     </div>
                                   </button>

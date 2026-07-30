@@ -549,14 +549,14 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
         </div>
 
         {/* Dropdowns / Filter Options Selection Part with premium custom background color */}
-        <div className="bg-slate-50/80 p-5 rounded-b-2xl rounded-t-none grid grid-cols-2 gap-3.5 text-right">
+        <div className="bg-slate-50/90 p-5 rounded-b-2xl rounded-t-none grid grid-cols-2 gap-3.5 text-right border-2 border-indigo-500/80 shadow-md">
           {/* Teacher Select */}
           <div className="col-span-2">
             <label className="block text-xs font-black text-slate-700 mb-1.5">المعلم</label>
             <select
               value={selectedTeacherId}
               onChange={(e) => setSelectedTeacherId(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
+              className="w-full bg-white border-2 border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 shadow-xs cursor-pointer transition-all"
             >
               {teachers.map((t, idx) => (
                 <option key={`${t.id}-${idx}`} value={t.id}>{t.name}</option>
@@ -564,35 +564,69 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
             </select>
           </div>
 
-          {/* Grade Select */}
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">الصف</label>
-            <select
-              value={selectedGradeId}
-              onChange={(e) => setSelectedGradeId(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
-            >
-              {grades.map((g, idx) => (
-                <option key={`${g.id}-${idx}`} value={g.id}>{g.name}</option>
-              ))}
-            </select>
+          {/* Grade Select Row */}
+          <div className="col-span-2 space-y-1.5">
+            <label className="block text-xs font-black text-slate-700">الصف والفصل</label>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
+              {grades.map((g, idx) => {
+                const isSelected = selectedGradeId === g.id;
+                const gradeShortName = g.name.replace(/^الصف\s+/, "").replace(/^صف\s+/, "");
+                return (
+                  <button
+                    key={`${g.id}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedGradeId(g.id);
+                      const gradeClasses = classes.filter(c => c.gradeId === g.id);
+                      if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
+                        setSelectedClassId(gradeClasses[0].id);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.02] active:scale-95 ${
+                      isSelected
+                        ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                        : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>🏫</span>
+                    <span>{gradeShortName}</span>
+                  </button>
+                );
+              })}
+              {grades.length === 0 && (
+                <p className="text-2xs text-slate-400 font-bold py-1">لا توجد صفوف دراسية</p>
+              )}
+            </div>
           </div>
 
-          {/* Class Select */}
-          <div>
-            <label className="block text-xs font-black text-slate-700 mb-1.5">الفصل</label>
-            <select
-              value={selectedClassId}
-              onChange={(e) => setSelectedClassId(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
-              disabled={filteredClasses.length === 0}
-            >
-              {filteredClasses.map((c, idx) => (
-                <option key={`${c.id}-${idx}`} value={c.id}>{c.name}</option>
-              ))}
-              {filteredClasses.length === 0 && <option value="">لا يوجد فصول</option>}
-            </select>
-          </div>
+          {/* Class Select Row (Separate Line, No Divider) */}
+          {selectedGradeId && (
+            <div className="col-span-2 space-y-1.5">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
+                {filteredClasses.map((c, idx) => {
+                  const isSelected = selectedClassId === c.id;
+                  const classNum = c.name.replace(/^الفصل\s*/, "").replace(/^فصل\s*/, "").trim();
+                  return (
+                    <button
+                      key={`${c.id}-${idx}`}
+                      type="button"
+                      onClick={() => setSelectedClassId(c.id)}
+                      className={`flex items-center justify-center min-w-[38px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
+                        isSelected
+                          ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                          : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50/70"
+                      }`}
+                    >
+                      <span>{classNum || c.name}</span>
+                    </button>
+                  );
+                })}
+                {filteredClasses.length === 0 && (
+                  <p className="text-2xs text-slate-400 font-bold py-1">لا توجد فصول تابعة لهذا الصف</p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Period Select */}
           <div className="col-span-2">
@@ -621,10 +655,10 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       <div 
         ref={firstStickyRef}
         style={{ top: "var(--header-height, 0px)" }}
-        className="sticky z-30 flex flex-col mb-4"
+        className="sticky top-0 z-30 flex flex-col mb-4 pt-1 pb-1 bg-gradient-to-b from-slate-100 via-slate-100/90 to-transparent"
       >
         {/* Unified Card Container */}
-        <div className={`bg-white/95 backdrop-blur-md rounded-2xl shadow-md border border-slate-200 p-4 flex flex-col gap-3.5 transition-all duration-300 ${
+        <div className={`bg-white/95 backdrop-blur-md rounded-2xl shadow-md border border-slate-200/90 p-3.5 flex flex-col gap-2.5 transition-all duration-300 ${
           activeTab === "attendance" ? "border-t-4 border-t-blue-600" : "border-t-4 border-t-amber-500"
         }`}>
           {/* Quick stats (Attendance & Absence side by side) */}
@@ -755,14 +789,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                   const isAbsent = absentStudentIds.includes(student.id);
                   const isLate = lateStudentIds.includes(student.id);
 
-                  let rowBg = "hover:bg-slate-50/80 bg-white";
-                  if (isAbsent) {
-                    rowBg = "bg-rose-50/70 hover:bg-rose-100/70";
-                  } else if (isLate) {
-                    rowBg = "bg-amber-50/70 hover:bg-amber-100/70";
-                  } else if (isPresent) {
-                    rowBg = "bg-emerald-50/40 hover:bg-emerald-50/70";
-                  }
+                  const rowBg = "hover:bg-slate-50 bg-white";
 
                   return (
                     <div
@@ -771,26 +798,10 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                       className={`flex items-center justify-between px-4 py-3.5 cursor-pointer transition select-none ${rowBg}`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full transition-colors ${
-                          isAbsent 
-                            ? "bg-rose-100 text-rose-700" 
-                            : isLate
-                            ? "bg-amber-100 text-amber-700"
-                            : isPresent
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-slate-100 text-slate-400"
-                        }`}>
+                        <span className="text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full bg-slate-100 text-slate-600">
                           {idx + 1}
                         </span>
-                        <span className={`text-sm font-semibold transition-colors ${
-                          isAbsent 
-                            ? "text-rose-700 font-bold" 
-                            : isLate
-                            ? "text-amber-700 font-bold"
-                            : isPresent
-                            ? "text-emerald-700 font-bold"
-                            : "text-slate-500 font-medium"
-                        }`}>
+                        <span className="text-sm font-bold text-slate-800">
                           {student.name}
                         </span>
                       </div>
