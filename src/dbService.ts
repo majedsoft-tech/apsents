@@ -737,15 +737,15 @@ export async function deleteGrade(id: string): Promise<void> {
   } catch (err: any) {}
 }
 
-// Add Class
+// Add Class (Instant optimistic return + background persistence)
 export async function addClass(name: string, gradeId: string): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
 
-  const existingClasses = await getClasses();
   const trimmedName = name.trim();
-  const existing = existingClasses.find(c => c.gradeId === gradeId && c.name?.trim() === trimmedName);
+  const localClasses = getLocalItems(CLASSES_COLL).filter(c => isDocBelongingToUser(c, uid, email));
+  const existing = localClasses.find(c => c.gradeId === gradeId && c.name?.trim() === trimmedName);
   if (existing) {
     return existing.id;
   }
@@ -762,21 +762,21 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
 
   saveOrUpdateLocalItem(CLASSES_COLL, newClassObj);
 
-  try {
-    const docRef = await addDoc(collection(db, CLASSES_COLL), { 
-      name: trimmedName, 
-      gradeId, 
-      userId: uid,
-      userEmail: email
-    });
-    if (docRef.id !== generatedId) {
+  // Firestore background write without waiting or blocking UI
+  addDoc(collection(db, CLASSES_COLL), { 
+    name: trimmedName, 
+    gradeId, 
+    userId: uid,
+    userEmail: email,
+    createdAt: Date.now()
+  }).then(docRef => {
+    if (docRef && docRef.id && docRef.id !== generatedId) {
       removeLocalItem(CLASSES_COLL, generatedId);
       saveOrUpdateLocalItem(CLASSES_COLL, { ...newClassObj, id: docRef.id });
     }
-    return docRef.id;
-  } catch (err: any) {
-    return generatedId;
-  }
+  }).catch(() => {});
+
+  return generatedId;
 }
 
 // Add Multiple Classes in a Batch (Ultra-fast atomic save)
@@ -785,9 +785,9 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
   const uid = eff.uid;
   const email = eff.email;
 
-  const existingClasses = await getClasses();
+  const localClasses = getLocalItems(CLASSES_COLL).filter(c => isDocBelongingToUser(c, uid, email));
   const existingKeySet = new Set<string>();
-  existingClasses.forEach(c => {
+  localClasses.forEach(c => {
     if (c.name && c.gradeId) existingKeySet.add(`${c.gradeId}__${c.name.trim()}`);
   });
 
@@ -799,7 +799,7 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
     if (!trimmed || !item.gradeId) return;
     const key = `${item.gradeId}__${trimmed}`;
     if (existingKeySet.has(key)) {
-      const match = existingClasses.find(c => c.gradeId === item.gradeId && c.name?.trim() === trimmed);
+      const match = localClasses.find(c => c.gradeId === item.gradeId && c.name?.trim() === trimmed);
       if (match) results.push({ id: match.id, name: trimmed, gradeId: item.gradeId });
     } else {
       const generatedId = generateLocalId("cls");
@@ -816,25 +816,28 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
         userEmail: email,
         createdAt: Date.now()
       });
+      existingKeySet.add(key);
     }
   });
 
   if (toCreate.length > 0) {
-    try {
-      const batch = writeBatch(db);
-      const now = Date.now();
-      toCreate.forEach((c, idx) => {
-        const docRef = doc(collection(db, CLASSES_COLL));
-        batch.set(docRef, {
-          name: c.name,
-          gradeId: c.gradeId,
-          userId: uid,
-          userEmail: email,
-          createdAt: now + idx
+    (async () => {
+      try {
+        const batch = writeBatch(db);
+        const now = Date.now();
+        toCreate.forEach((c, idx) => {
+          const docRef = doc(collection(db, CLASSES_COLL));
+          batch.set(docRef, {
+            name: c.name,
+            gradeId: c.gradeId,
+            userId: uid,
+            userEmail: email,
+            createdAt: now + idx
+          });
         });
-      });
-      await batch.commit();
-    } catch (err: any) {}
+        await batch.commit();
+      } catch (err: any) {}
+    })();
   }
 
   return results;

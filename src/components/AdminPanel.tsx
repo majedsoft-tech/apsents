@@ -3129,11 +3129,78 @@ export default function AdminPanel({
                         {/* Classes Grid */}
                         <div className="space-y-2.5">
                           <div className="flex items-center justify-between flex-wrap gap-2">
-                            <p className="text-2xs font-extrabold text-slate-700">
-                              فصول الصف (اضغط على الرقم للإضافة أو الحذف):
-                            </p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-2xs font-extrabold text-slate-700">
+                                فصول الصف (اضغط على الرقم للإضافة أو الحذف):
+                              </p>
+                              {/* Quick selection presets */}
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const needed = [1, 2, 3, 4, 5];
+                                    const toAdd: { name: string; gradeId: string }[] = [];
+                                    needed.forEach(num => {
+                                      const cName = `الفصل ${num}`;
+                                      if (!gradeClasses.some(c => c.name?.trim() === cName || c.name?.trim() === `${num}`)) {
+                                        toAdd.push({ name: cName, gradeId: grade.id });
+                                      }
+                                    });
+                                    if (toAdd.length > 0) {
+                                      const tempItems = toAdd.map(item => ({
+                                        id: `temp_cls_${Date.now()}_${item.name}`,
+                                        name: item.name,
+                                        gradeId: grade.id
+                                      }));
+                                      setClasses(prev => [...prev, ...tempItems]);
+                                      const res = await addClassesBatch(toAdd);
+                                      setClasses(prev => {
+                                        const tempIds = new Set(tempItems.map(t => t.id));
+                                        const clean = prev.filter(p => !tempIds.has(p.id));
+                                        return [...clean, ...res];
+                                      });
+                                    }
+                                  }}
+                                  className="text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-md border border-indigo-200 transition cursor-pointer"
+                                  title="إضافة الفصول من 1 إلى 5 فوراً"
+                                >
+                                  + إضافة (1-5)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const needed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+                                    const toAdd: { name: string; gradeId: string }[] = [];
+                                    needed.forEach(num => {
+                                      const cName = `الفصل ${num}`;
+                                      if (!gradeClasses.some(c => c.name?.trim() === cName || c.name?.trim() === `${num}`)) {
+                                        toAdd.push({ name: cName, gradeId: grade.id });
+                                      }
+                                    });
+                                    if (toAdd.length > 0) {
+                                      const tempItems = toAdd.map(item => ({
+                                        id: `temp_cls_${Date.now()}_${item.name}`,
+                                        name: item.name,
+                                        gradeId: grade.id
+                                      }));
+                                      setClasses(prev => [...prev, ...tempItems]);
+                                      const res = await addClassesBatch(toAdd);
+                                      setClasses(prev => {
+                                        const tempIds = new Set(tempItems.map(t => t.id));
+                                        const clean = prev.filter(p => !tempIds.has(p.id));
+                                        return [...clean, ...res];
+                                      });
+                                    }
+                                  }}
+                                  className="text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-md border border-indigo-200 transition cursor-pointer"
+                                  title="إضافة الفصول من 1 إلى 10 فوراً"
+                                >
+                                  + إضافة (1-10)
+                                </button>
+                              </div>
+                            </div>
                             {gradeClasses.length === 0 && (
-                              <span className="bg-amber-400 text-slate-900 text-[10px] px-2.5 py-0.5 rounded-md font-black animate-bounce shadow-2xs">
+                              <span className="bg-amber-400 text-slate-900 text-[10px] px-2.5 py-0.5 rounded-md font-black shadow-2xs">
                                 اضغط على رقم الفصل لإضافته للصف 👈
                               </span>
                             )}
@@ -3159,15 +3226,15 @@ export default function AdminPanel({
                                 <button
                                   key={`gcard-cls-${num}`}
                                   type="button"
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (exists && cls) {
-                                      // Instant optimistic removal
+                                      // Instant 0ms optimistic removal
                                       setClasses(prev => prev.filter(c => c.id !== cls.id));
-                                      deleteClass(cls.id).catch(console.error);
+                                      deleteClass(cls.id).catch(() => {});
                                     } else {
                                       const className = `الفصل ${num}`;
                                       const tempId = `temp_cls_${Date.now()}_${num}`;
-                                      // Instant optimistic addition
+                                      // Instant 0ms optimistic addition
                                       setClasses((prev) => {
                                         if (prev.some(c => c.gradeId === grade.id && c.name?.trim() === className)) {
                                           return prev;
@@ -3178,26 +3245,23 @@ export default function AdminPanel({
                                         ];
                                       });
 
-                                      try {
-                                        const newId = await addClass(className, grade.id);
+                                      // Background save
+                                      addClass(className, grade.id).then((newId) => {
                                         setClasses((prev) => 
                                           prev.map(c => c.id === tempId ? { ...c, id: newId } : c)
                                         );
-                                      } catch (err) {
-                                        setClasses(prev => prev.filter(c => c.id !== tempId));
-                                        showMessage("حدث خطأ أثناء إضافة الفصل", "error");
-                                      }
+                                      }).catch(() => {});
                                     }
                                   }}
                                   className={`flex flex-col rounded-xl sm:rounded-2xl overflow-hidden border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
                                     exists
-                                      ? "border-indigo-600"
+                                      ? "border-indigo-600 ring-1 ring-indigo-600"
                                       : "border-indigo-200 hover:border-indigo-300"
                                   }`}
                                 >
                                   {/* Upper Box */}
                                   <div
-                                    className={`py-2 px-1 text-center text-sm sm:text-base font-black flex items-center justify-center gap-1 ${
+                                    className={`py-2 px-1 text-center text-sm sm:text-base font-black flex items-center justify-center gap-1 select-none ${
                                       exists
                                         ? "bg-[#5046e5] text-white"
                                         : "bg-white text-indigo-600 hover:bg-indigo-50/70"
@@ -3208,7 +3272,7 @@ export default function AdminPanel({
                                   </div>
 
                                   {/* Lower Box */}
-                                  <div className="bg-[#fff1f2] text-rose-600 text-xs sm:text-[12.5px] font-extrabold py-1 border-t border-rose-100/80 text-center whitespace-nowrap">
+                                  <div className="bg-[#fff1f2] text-rose-600 text-xs sm:text-[12.5px] font-extrabold py-1 border-t border-rose-100/80 text-center whitespace-nowrap select-none">
                                     {clsStudentCount} طالب
                                   </div>
                                 </button>
