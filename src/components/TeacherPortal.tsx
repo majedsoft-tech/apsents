@@ -98,6 +98,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
   const [savedAbsentIds, setSavedAbsentIds] = useState<string[]>([]);
   const [isAllPresentChecked, setIsAllPresentChecked] = useState<boolean>(false);
   const [isAllAbsentChecked, setIsAllAbsentChecked] = useState<boolean>(false);
+  const [isBulkSelected, setIsBulkSelected] = useState<boolean>(false);
   const isNoAbsence = absentStudentIds.length === 0 && lateStudentIds.length === 0;
   const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -171,13 +172,10 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
   // Initialize dropdowns with first elements when data loaded
   useEffect(() => {
-    if (teachers.length > 0 && !selectedTeacherId) {
-      setSelectedTeacherId(teachers[0].id);
-    }
     if (grades.length > 0 && !selectedGradeId) {
       setSelectedGradeId(grades[0].id);
     }
-  }, [teachers, grades]);
+  }, [grades]);
 
   // Update classes list when grade changes
   useEffect(() => {
@@ -240,6 +238,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
               setIsDirty(false);
               setIsAllPresentChecked(false);
               setIsAllAbsentChecked(false);
+              setIsBulkSelected(false);
             } else {
               setPresentStudentIds([]);
               setAbsentStudentIds([]);
@@ -249,16 +248,15 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
               setIsDirty(false);
               setIsAllPresentChecked(false);
               setIsAllAbsentChecked(false);
+              setIsBulkSelected(false);
             }
             setAttendanceLoading(false);
           },
-          (err) => {
-            console.error("Error subscribing to attendance record:", err);
+          (_err) => {
             setAttendanceLoading(false);
           }
         );
       } catch (error) {
-        console.error("Error loading students:", error);
         setAttendanceLoading(false);
       }
     }
@@ -284,8 +282,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
         setStudentBehaviors(records);
         setBehaviorLoading(false);
       },
-      (error) => {
-        console.error("Error subscribing to behaviors:", error);
+      (_error) => {
         setBehaviorLoading(false);
       }
     );
@@ -299,23 +296,43 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
     setIsAllAbsentChecked(false);
 
     const isAbsent = absentStudentIds.includes(studentId);
+    const shouldTogglePresentAbsent = hasRecord || isBulkSelected;
 
-    if (isAbsent) {
-      // Absent -> Present (Remove from absent/late, add to present)
-      setAbsentStudentIds(prev => prev.filter(id => id !== studentId));
-      setLateStudentIds(prev => prev.filter(id => id !== studentId));
-      setPresentStudentIds(prev => {
-        if (!prev.includes(studentId)) return [...prev, studentId];
-        return prev;
-      });
+    if (!shouldTogglePresentAbsent) {
+      // حالة عدم الحفظ المسبق وبدون اختيار حضور/غياب الجميع
+      if (isAbsent) {
+        // إلغاء تحديد الطالب كغائب (مسح حالة غائب وإبقائه غير محدد بدون إظهار كلمة حاضر)
+        setAbsentStudentIds(prev => prev.filter(id => id !== studentId));
+        setLateStudentIds(prev => prev.filter(id => id !== studentId));
+        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+      } else {
+        // تحديد الطالب كغائب
+        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+        setLateStudentIds(prev => prev.filter(id => id !== studentId));
+        setAbsentStudentIds(prev => {
+          if (!prev.includes(studentId)) return [...prev, studentId];
+          return prev;
+        });
+      }
     } else {
-      // Present/Late/Unspecified -> Absent (Remove from present/late, add to absent)
-      setPresentStudentIds(prev => prev.filter(id => id !== studentId));
-      setLateStudentIds(prev => prev.filter(id => id !== studentId));
-      setAbsentStudentIds(prev => {
-        if (!prev.includes(studentId)) return [...prev, studentId];
-        return prev;
-      });
+      // حالة تم الحفظ المسبق أو تم تحديد حضور/غياب الجميع لهذه الحصة
+      if (isAbsent) {
+        // التغيير من غائب إلى حاضر
+        setAbsentStudentIds(prev => prev.filter(id => id !== studentId));
+        setLateStudentIds(prev => prev.filter(id => id !== studentId));
+        setPresentStudentIds(prev => {
+          if (!prev.includes(studentId)) return [...prev, studentId];
+          return prev;
+        });
+      } else {
+        // التغيير من حاضر إلى غائب
+        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+        setLateStudentIds(prev => prev.filter(id => id !== studentId));
+        setAbsentStudentIds(prev => {
+          if (!prev.includes(studentId)) return [...prev, studentId];
+          return prev;
+        });
+      }
     }
   };
 
@@ -327,6 +344,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
     setPresentStudentIds(students.map(s => s.id));
     setIsAllPresentChecked(true);
     setIsAllAbsentChecked(false);
+    setIsBulkSelected(true);
   };
 
   const handleSelectAllAbsent = () => {
@@ -336,6 +354,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
     setPresentStudentIds([]);
     setIsAllPresentChecked(false);
     setIsAllAbsentChecked(true);
+    setIsBulkSelected(true);
   };
 
   // Save attendance
@@ -552,14 +571,30 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
         <div className="bg-slate-50/90 p-5 rounded-b-2xl rounded-t-none grid grid-cols-2 gap-3.5 text-right border-2 border-indigo-500/80 shadow-md">
           {/* Teacher Select */}
           <div className="col-span-2">
-            <label className="block text-xs font-black text-slate-700 mb-1.5">المعلم</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-black text-slate-700">المعلم</label>
+              {!selectedTeacherId && (
+                <span className="text-amber-600 font-extrabold text-2xs animate-pulse">
+                  👇 (الرجاء اختيار اسم المعلم)
+                </span>
+              )}
+            </div>
             <select
               value={selectedTeacherId}
               onChange={(e) => setSelectedTeacherId(e.target.value)}
-              className="w-full bg-white border-2 border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 shadow-xs cursor-pointer transition-all"
+              className={`w-full bg-white border-2 rounded-xl px-3 py-2.5 text-xs md:text-sm font-bold transition-all cursor-pointer ${
+                !selectedTeacherId
+                  ? "border-amber-500 ring-2 ring-amber-400/50 bg-amber-50/60 animate-pulse text-amber-900 shadow-md shadow-amber-500/20"
+                  : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs"
+              }`}
             >
+              <option value="" disabled className="text-slate-400 font-bold bg-white">
+                👨‍🏫 -- الرجاء اختيار اسم المعلم --
+              </option>
               {teachers.map((t, idx) => (
-                <option key={`${t.id}-${idx}`} value={t.id}>{t.name}</option>
+                <option key={`${t.id}-${idx}`} value={t.id} className="text-slate-800 font-bold bg-white">
+                  {t.name}
+                </option>
               ))}
             </select>
           </div>

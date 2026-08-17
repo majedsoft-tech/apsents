@@ -46,6 +46,23 @@ export interface BehaviorRecord {
   timestamp: any;
 }
 
+export interface MorningDelayRecord {
+  id: string;
+  studentId: string;
+  studentName?: string;
+  gradeId: string;
+  gradeName?: string;
+  classId: string;
+  className?: string;
+  date: string; // YYYY-MM-DD
+  arrivalTime: string; // e.g. "07:15 ص" or "07:30"
+  delayMinutes?: number;
+  reason: string; // e.g. "عذر مقبول", "بدون عذر", "أزمة مواصلات", "نوم", "ظروف أسرية"
+  recordedBy: string; // اسم المناوب / المشرف
+  notes?: string;
+  timestamp: any;
+}
+
 export interface RegisteredUser {
   id: string; // corresponds to uid
   uid: string;

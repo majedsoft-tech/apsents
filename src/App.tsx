@@ -17,6 +17,7 @@ import {
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
+import MorningDelayPortal from "./components/MorningDelayPortal";
 import AdminPanel from "./components/AdminPanel";
 import SuperAdminPanel from "./components/SuperAdminPanel";
 import TourGuide from "./components/TourGuide";
@@ -43,16 +44,42 @@ import {
   Check,
   ExternalLink,
   LogOut,
-  Edit2
+  Edit2,
+  SunMedium
 } from "lucide-react";
 
-function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" {
+function getOrCreateOwnSchoolAdminId(): string {
+  let stored = localStorage.getItem("own_school_admin_id");
+  if (!stored) {
+    const legacyGuest = localStorage.getItem("guest_user_session");
+    if (legacyGuest) {
+      try {
+        const parsed = JSON.parse(legacyGuest);
+        if (parsed?.uid && !parsed.uid.startsWith("owner_")) {
+          stored = parsed.uid;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (!stored) {
+      stored = "school_" + Math.random().toString(36).substring(2, 10);
+    }
+    localStorage.setItem("own_school_admin_id", stored);
+  }
+  return stored;
+}
+
+function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay" {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
   const search = window.location.search.toLowerCase();
   
   if (path.includes("super-admin") || hash.includes("super-admin") || search.includes("super-admin") || search.includes("page=super-admin")) {
     return "super-admin";
+  }
+  if (path.includes("morning-delay") || hash.includes("morning-delay") || search.includes("morning-delay") || search.includes("page=morning-delay")) {
+    return "morning-delay";
   }
   if (path.includes("stats-only") || hash.includes("stats-only") || search.includes("stats-only") || search.includes("page=stats-only")) {
     return "stats-only";
@@ -96,10 +123,6 @@ export default function App() {
   // School Name States
   const [schoolName, setSchoolName] = useState<string>("");
   const [isSavingSchoolName, setIsSavingSchoolName] = useState<boolean>(false);
-  const [showSchoolModal, setShowSchoolModal] = useState<boolean>(false);
-  const [schoolInput, setSchoolInput] = useState<string>("");
-  const [modalError, setModalError] = useState<string>("");
-  const [modalSaving, setModalSaving] = useState<boolean>(false);
 
   // Global Operation Progress State (Saves/Loads/Deletes across the app)
   const [globalProgress, setGlobalProgress] = useState<{
@@ -123,9 +146,12 @@ export default function App() {
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
 
   // Responsive Navigation States
-  const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only" | "super-admin">(getInitialMode());
+  const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay">(getInitialMode());
   const [isDirectTeacherLink, setIsDirectTeacherLink] = useState<boolean>(() => {
     return getInitialMode() === "teacher";
+  });
+  const [isDirectMorningDelayLink, setIsDirectMorningDelayLink] = useState<boolean>(() => {
+    return getInitialMode() === "morning-delay";
   });
 
   // If the user navigates to admin or other sections, reset direct link status
@@ -133,10 +159,13 @@ export default function App() {
     if (appMode !== "teacher") {
       setIsDirectTeacherLink(false);
     }
+    if (appMode !== "morning-delay") {
+      setIsDirectMorningDelayLink(false);
+    }
   }, [appMode]);
 
-  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink);
-  const showHeader = appMode !== "teacher" || !isDirectTeacherLink;
+  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink) || (appMode === "morning-delay" && !isDirectMorningDelayLink);
+  const showHeader = (appMode !== "teacher" || !isDirectTeacherLink) && (appMode !== "morning-delay" || !isDirectMorningDelayLink);
 
   // Ref for header height measurement
   const headerRef = React.useRef<HTMLElement>(null);
@@ -165,6 +194,7 @@ export default function App() {
 
   const [copied, setCopied] = useState<boolean>(false);
   const [teacherCopied, setTeacherCopied] = useState<boolean>(false);
+  const [morningDelayCopied, setMorningDelayCopied] = useState<boolean>(false);
   const [teacherTab, setTeacherTab] = useState<"attendance" | "behavior">(getInitialTeacherTab());
   const [adminTab, setAdminTab] = useState<"stats" | "grades" | "teachers" | "students">(getInitialAdminTab());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -193,62 +223,53 @@ export default function App() {
   // Setup real-time subscribers for grades, classes, teachers, and students to keep data synced instantly
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
-    const pageParam = searchParams.get("page") || "";
-    const ownerParam = searchParams.get("owner") || "";
+    const hashIndex = window.location.hash.indexOf("?");
+    const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
+
+    const pageParam = searchParams.get("page") || hashParams?.get("page") || "";
+    const ownerParam = searchParams.get("owner") || hashParams?.get("owner") || "";
     const path = window.location.pathname.toLowerCase();
     const hash = window.location.hash.toLowerCase();
 
     const isPublicRoute = 
       pageParam === "teacher" || 
       pageParam === "stats-only" || 
+      pageParam === "morning-delay" ||
       path.includes("teacher") || 
       path.includes("stats-only") || 
+      path.includes("morning-delay") ||
       hash.includes("teacher") || 
       hash.includes("stats-only") ||
+      hash.includes("morning-delay") ||
       appMode === "teacher" || 
-      appMode === "stats-only";
+      appMode === "stats-only" ||
+      appMode === "morning-delay";
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (user) {
+      if (ownerParam) {
+        const guestUser = {
+          uid: ownerParam,
+          email: `owner_${ownerParam}@school.com`,
+          displayName: user?.uid === ownerParam ? (user.displayName || "مدير المدرسة") : "زائر (مباشر)",
+          isGuest: user?.uid !== ownerParam
+        };
+        setCurrentUser(guestUser);
+        setActiveUser(guestUser);
+      } else if (user) {
         setCurrentUser(user);
         setActiveUser(user);
-        localStorage.removeItem("guest_user_session");
-        setAuthChecking(false);
-        const searchParams = new URLSearchParams(window.location.search);
-        if (!searchParams.has("page")) {
-          setAppMode("admin");
-          setAdminTab("stats");
-        }
       } else {
-        if (isPublicRoute || ownerParam) {
-          const guestUser = {
-            uid: ownerParam || "guest_school_user",
-            email: ownerParam ? `owner_${ownerParam}@school.com` : "guest@school.com",
-            displayName: "زائر (مباشر)",
-            isGuest: true
-          };
-          setCurrentUser(guestUser);
-          setActiveUser(guestUser);
-          localStorage.setItem("guest_user_session", JSON.stringify(guestUser));
-        } else {
-          const storedGuest = localStorage.getItem("guest_user_session");
-          if (storedGuest) {
-            try {
-              const parsed = JSON.parse(storedGuest);
-              setCurrentUser(parsed);
-              setActiveUser(parsed);
-            } catch (e) {
-              setCurrentUser(null);
-              setActiveUser(null);
-            }
-          } else {
-            setCurrentUser(null);
-            setActiveUser(null);
-          }
-        }
-        setAuthChecking(false);
-        setLoading(false);
+        const ownSchoolId = getOrCreateOwnSchoolAdminId();
+        const guestUser = {
+          uid: ownSchoolId,
+          email: `owner_${ownSchoolId}@school.com`,
+          displayName: "مدير المدرسة (غير مسجل)",
+          isGuest: true
+        };
+        setCurrentUser(guestUser);
+        setActiveUser(guestUser);
       }
+      setAuthChecking(false);
     });
     return () => unsubscribeAuth();
   }, [appMode]);
@@ -268,12 +289,27 @@ export default function App() {
   }, [currentUser, schoolName]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setGrades([]);
+      setClasses([]);
+      setTeachers([]);
+      setStudents([]);
+      setSchoolName("");
+      return;
+    }
 
-    // Read cached school name from localStorage first to prevent loading screen flicker
-    const cached = localStorage.getItem(`school_name_${currentUser.email?.toLowerCase()}`);
-    if (cached) {
-      setSchoolName(cached);
+    // Reset previous account data immediately to guarantee strict isolation
+    setGrades([]);
+    setClasses([]);
+    setTeachers([]);
+    setStudents([]);
+    // Check cached school name for instantaneous presentation during loading
+    const cachedName = localStorage.getItem(`school_name_${currentUser.uid}`) || 
+      (currentUser.email ? localStorage.getItem(`school_name_${currentUser.email.toLowerCase()}`) : null);
+    if (cachedName) {
+      setSchoolName(cachedName);
+    } else {
+      setSchoolName("");
     }
 
     setLoading(true);
@@ -332,7 +368,6 @@ export default function App() {
           }
         } else {
           setSchoolName("");
-          setShowSchoolModal(true);
         }
 
         const sortedGrades = deduplicateById([...g]).sort((a, b) => {
@@ -368,7 +403,6 @@ export default function App() {
             }
           } else {
             setSchoolName("");
-            setShowSchoolModal(true);
           }
         });
 
@@ -430,7 +464,7 @@ export default function App() {
   };
 
   const handleCopyStatsLink = () => {
-    const ownerId = currentUser?.uid || "";
+    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
     const statsLink = `${window.location.origin}${window.location.pathname}?page=stats-only${ownerId ? `&owner=${ownerId}` : ""}`;
     navigator.clipboard.writeText(statsLink).then(() => {
       setCopied(true);
@@ -441,11 +475,22 @@ export default function App() {
   };
 
   const handleCopyTeacherLink = () => {
-    const ownerId = currentUser?.uid || "";
+    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
     const teacherLink = `${window.location.origin}${window.location.pathname}?page=teacher&tab=attendance${ownerId ? `&owner=${ownerId}` : ""}`;
     navigator.clipboard.writeText(teacherLink).then(() => {
       setTeacherCopied(true);
       setTimeout(() => setTeacherCopied(false), 2000);
+    }).catch((err) => {
+      console.error("Failed to copy link: ", err);
+    });
+  };
+
+  const handleCopyMorningDelayLink = () => {
+    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
+    const delayLink = `${window.location.origin}${window.location.pathname}?page=morning-delay${ownerId ? `&owner=${ownerId}` : ""}`;
+    navigator.clipboard.writeText(delayLink).then(() => {
+      setMorningDelayCopied(true);
+      setTimeout(() => setMorningDelayCopied(false), 2000);
     }).catch((err) => {
       console.error("Failed to copy link: ", err);
     });
@@ -472,7 +517,7 @@ export default function App() {
 
   // Auto start interactive tour for new users on their first visit
   useEffect(() => {
-    if (currentUser && !loading && schoolName && appMode !== "stats-only" && appMode !== "teacher") {
+    if (currentUser && !loading && schoolName && appMode !== "stats-only" && appMode !== "teacher" && appMode !== "morning-delay") {
       const key = `tour_completed_${currentUser.email?.toLowerCase()}`;
       const completed = localStorage.getItem(key);
       if (!completed) {
@@ -498,14 +543,12 @@ export default function App() {
 
   // Direct to Admin Stats Dashboard (بوابة متابعة الغياب والسلوك) on initial login if no explicit page param
   useEffect(() => {
-    if (currentUser) {
-      const searchParams = new URLSearchParams(window.location.search);
-      if (!searchParams.has("page")) {
-        setAppMode("admin");
-        setAdminTab("stats");
-      }
+    const searchParams = new URLSearchParams(window.location.search);
+    if (!searchParams.has("page")) {
+      setAppMode("admin");
+      setAdminTab("stats");
     }
-  }, [currentUser]);
+  }, []);
 
   // Persist current mode and tabs to localStorage & keep URL state in perfect sync
   useEffect(() => {
@@ -522,20 +565,27 @@ export default function App() {
     }
 
     const currentSearch = new URLSearchParams(window.location.search);
-    const currentPage = currentSearch.get("page");
-    const currentTab = currentSearch.get("tab");
+    const hashIdx = window.location.hash.indexOf("?");
+    const hashSearch = hashIdx !== -1 ? new URLSearchParams(window.location.hash.substring(hashIdx)) : null;
+
+    const currentPage = currentSearch.get("page") || hashSearch?.get("page");
+    const currentTab = currentSearch.get("tab") || hashSearch?.get("tab");
+    const currentOwner = currentSearch.get("owner") || hashSearch?.get("owner");
 
     let expectedPage = "admin";
     if (appMode === "super-admin") expectedPage = "super-admin";
     else if (appMode === "stats-only") expectedPage = "stats-only";
     else if (appMode === "teacher") expectedPage = "teacher";
+    else if (appMode === "morning-delay") expectedPage = "morning-delay";
 
     const expectedTab = appMode === "teacher" ? teacherTab : adminTab;
 
-    if (currentPage !== expectedPage || currentTab !== expectedTab) {
-      const newPath = appMode === "admin" ? "/admin" : appMode === "super-admin" ? "/super-admin" : appMode === "stats-only" ? "/" : "/";
-      const newSearch = `?page=${expectedPage}&tab=${expectedTab}`;
-      const newHash = appMode === "admin" ? "#/admin" : appMode === "super-admin" ? "#/super-admin" : appMode === "stats-only" ? "#/stats-only" : "#/";
+    if (currentPage !== expectedPage || (appMode !== "morning-delay" && currentTab !== expectedTab)) {
+      const newPath = appMode === "admin" ? "/admin" : appMode === "super-admin" ? "/super-admin" : appMode === "morning-delay" ? "/morning-delay" : appMode === "stats-only" ? "/" : "/";
+      const ownerPart = currentOwner ? `&owner=${currentOwner}` : "";
+      const tabPart = appMode === "morning-delay" ? "" : `&tab=${expectedTab}`;
+      const newSearch = `?page=${expectedPage}${tabPart}${ownerPart}`;
+      const newHash = appMode === "admin" ? "#/admin" : appMode === "super-admin" ? "#/super-admin" : appMode === "morning-delay" ? "#/morning-delay" : appMode === "stats-only" ? "#/stats-only" : "#/";
       
       window.history.replaceState({ mode: appMode }, "", `${newPath}${newSearch}${newHash}`);
     }
@@ -546,7 +596,10 @@ export default function App() {
     let title = schoolName ? `بوابة ${schoolName}` : "البوابة الرقمية للرصد والمتابعة";
     let emoji = "🏫";
     
-    if (appMode === "stats-only") {
+    if (appMode === "morning-delay") {
+      title = schoolName ? `رصد التأخر الصباحي | ${schoolName}` : "رصد التأخر الصباحي | البوابة الرقمية";
+      emoji = "⏰";
+    } else if (appMode === "stats-only") {
       title = schoolName ? `متابعة الغياب والسلوك | ${schoolName}` : "متابعة الغياب والسلوك | البوابة الرقمية";
       emoji = "📊";
     } else if (appMode === "teacher") {
@@ -587,17 +640,23 @@ export default function App() {
     }
   }, [appMode, teacherTab, adminTab, schoolName]);
 
-  const navigateTo = (mode: "teacher" | "admin" | "stats-only" | "super-admin") => {
-    const newPath = mode === "admin" ? "/admin" : mode === "super-admin" ? "/super-admin" : mode === "stats-only" ? "/" : "/";
-    const newSearch = mode === "admin" ? "?page=admin" : mode === "super-admin" ? "?page=super-admin" : mode === "stats-only" ? "?page=stats-only" : "?page=teacher";
-    const newHash = mode === "admin" ? "#/admin" : mode === "super-admin" ? "#/super-admin" : mode === "stats-only" ? "#/stats-only" : "#/";
+  const navigateTo = (mode: "teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay") => {
+    const currentSearch = new URLSearchParams(window.location.search);
+    const hashIdx = window.location.hash.indexOf("?");
+    const hashSearch = hashIdx !== -1 ? new URLSearchParams(window.location.hash.substring(hashIdx)) : null;
+    const currentOwner = currentSearch.get("owner") || hashSearch?.get("owner");
+    const ownerPart = currentOwner ? `&owner=${currentOwner}` : "";
+
+    const newPath = mode === "admin" ? "/admin" : mode === "super-admin" ? "/super-admin" : mode === "morning-delay" ? "/morning-delay" : mode === "stats-only" ? "/" : "/";
+    const newSearch = mode === "admin" ? `?page=admin${ownerPart}` : mode === "super-admin" ? `?page=super-admin${ownerPart}` : mode === "morning-delay" ? `?page=morning-delay${ownerPart}` : mode === "stats-only" ? `?page=stats-only${ownerPart}` : `?page=teacher${ownerPart}`;
+    const newHash = mode === "admin" ? "#/admin" : mode === "super-admin" ? "#/super-admin" : mode === "morning-delay" ? "#/morning-delay" : mode === "stats-only" ? "#/stats-only" : "#/";
     
     // Push state to browser history
     window.history.pushState({ mode }, "", `${newPath}${newSearch}${newHash}`);
     setAppMode(mode);
 
     // Keep right sidebar open when opening/switching links inside the control panel
-    if (mode === "admin" || mode === "super-admin" || mode === "teacher") {
+    if (mode === "admin" || mode === "super-admin" || mode === "teacher" || mode === "morning-delay") {
       setIsSidebarOpen(true);
     }
   };
@@ -605,44 +664,46 @@ export default function App() {
   if (authChecking || loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100" dir="rtl">
-        <div className="max-w-md w-full bg-slate-900/60 border border-slate-800/80 rounded-3xl p-8 space-y-6 shadow-2xl relative overflow-hidden animate-fadeIn">
+        <div className="max-w-md w-full bg-slate-900/80 border border-slate-800 rounded-3xl p-8 space-y-5 shadow-2xl relative overflow-hidden animate-fadeIn backdrop-blur-md">
           {/* Decorative ambient glowing backdrops */}
-          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full -mr-12 -mt-12 blur-xl"></div>
-          <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full -ml-12 -mb-12 blur-xl"></div>
+          <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full -mr-12 -mt-12 blur-2xl"></div>
+          <div className="absolute bottom-0 left-0 w-36 h-36 bg-indigo-500/10 rounded-full -ml-12 -mb-12 blur-2xl"></div>
           
           <div className="relative flex flex-col items-center">
-            {schoolName ? (
-              <div className="mx-auto bg-gradient-to-tr from-blue-600 to-indigo-700 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-blue-950/50 w-fit mb-5 animate-bounce">
-                🏫
-              </div>
-            ) : (
-              <div className="mx-auto bg-gradient-to-tr from-rose-500 to-amber-500 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-amber-950/50 w-fit mb-5 animate-pulse">
-                ✨
-              </div>
-            )}
+            <div className="mx-auto bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-indigo-950/50 w-fit mb-3 animate-bounce">
+              🏫
+            </div>
             
-            <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+            <Loader2 className="w-10 h-10 text-blue-400 animate-spin mb-4" />
             
-            <h3 className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400">
-              {schoolName ? `بوابة ${schoolName}` : "مرحباً بك في نظام رصد ومتابعة الغياب"}
+            {/* Welcome Badge */}
+            <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-bold mb-3 shadow-inner">
+              <span>✨</span>
+              <span>مرحباً وأهلاً وسهلاً بك</span>
+            </div>
+
+            {/* School Name Title */}
+            <h3 className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-200 to-purple-300">
+              {schoolName ? `بوابة ${schoolName}` : "البوابة الرقمية للرصد والمتابعة"}
             </h3>
-            
-            <p className="text-xs text-slate-400 mt-2 font-medium leading-relaxed">
-              {authChecking 
-                ? "جاري التحقق من حالة تسجيل الدخول..." 
-                : schoolName 
-                  ? `أهلاً بك مجدداً! جاري تحميل سجلات ${schoolName} والبيانات الحية...`
-                  : "أهلاً بك! جاري تهيئة حسابك الجديد وتحميل النظام في دقائق معدودة..."
-              }
-            </p>
-            
-            {!schoolName && !authChecking && (
-              <div className="mt-4 p-3 bg-slate-950/50 border border-slate-800/80 rounded-xl max-w-sm">
-                <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
-                  أنت على بعد خطوات بسيطة للحصول على نظام متكامل وذكي لمتابعة ورصد الغياب والسلوك الخاص بمدرستك. يرجى الانتظار للحظات...
-                </p>
-              </div>
+
+            {/* School Name subtitle highlight if schoolName exists */}
+            {schoolName && (
+              <p className="text-xs font-bold text-indigo-400 mt-1">
+                منصة {schoolName} لرصد ومتابعة الغياب والسلوك
+              </p>
             )}
+            
+            <div className="mt-4 p-3.5 bg-slate-950/70 border border-slate-800/80 rounded-2xl w-full text-slate-300">
+              <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                {authChecking 
+                  ? "جاري التحقق من حالة تسجيل الدخول..." 
+                  : schoolName 
+                    ? `أهلاً بك مجدداً! جاري تحميل سجلات ${schoolName} والبيانات الحية...`
+                    : "أهلاً بك! جاري تهيئة حسابك وحفظ اسم مدرستك وتحميل البيانات..."
+                }
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -735,11 +796,10 @@ export default function App() {
               setLoginError(null);
               try {
                 await signInWithPopup(auth, googleProvider);
-                const searchParams = new URLSearchParams(window.location.search);
-                if (!searchParams.has("page")) {
-                  setAppMode("admin");
-                  setAdminTab("stats");
-                }
+                setAppMode("admin");
+                setAdminTab("stats");
+                localStorage.removeItem("last_admin_tab");
+                window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
               } catch (err: any) {
                 console.error("Google Sign-In Error:", err);
                 if (err?.code === "auth/unauthorized-domain" || err?.message?.includes("unauthorized-domain")) {
@@ -860,24 +920,64 @@ export default function App() {
     return (
       <div className="flex flex-col h-full justify-between p-5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
       <div className="space-y-6">
-        {/* School Logo Shield */}
-        <div className="flex items-center justify-between border-b border-slate-200/80 pb-5">
+        {/* School Logo & Dynamic Name Card in Sidebar */}
+        <div className="border-b border-slate-200/80 pb-4 space-y-3">
           <div className="flex items-center gap-3">
-            <div id="sidebar-school-logo" className="bg-gradient-to-tr from-blue-600 to-indigo-700 p-2.5 rounded-xl text-white font-extrabold text-lg shadow-md shadow-blue-500/20">
+            <div id="sidebar-school-logo" className="bg-gradient-to-tr from-blue-600 to-indigo-700 p-2.5 rounded-xl text-white font-extrabold text-lg shadow-md shadow-blue-500/20 flex-shrink-0">
               🏫
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <h1 className="text-sm font-black text-slate-800 tracking-wide">SmartSchool</h1>
-              {isEditingSidebarSchool ? (
-                <div className="flex items-center gap-1 mt-1">
-                  <input
-                    type="text"
-                    value={sidebarSchoolInput}
-                    onChange={(e) => setSidebarSchoolInput(e.target.value)}
-                    className="text-[10px] font-bold px-2 py-0.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded text-right text-slate-800 max-w-[110px] outline-none"
-                    placeholder="اسم المدرسة"
-                    autoFocus
-                  />
+              <span className="text-[10px] text-blue-600 font-bold block">بوابة الإدارة الرقمية</span>
+            </div>
+          </div>
+
+          {/* School Name Badge / Inline Edit Card */}
+          <div className="bg-slate-50/90 border border-slate-200/90 rounded-xl p-2.5 space-y-1.5 shadow-3xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                <span>🏫</span>
+                <span>اسم المدرسة:</span>
+              </span>
+              {!isEditingSidebarSchool && !isSavingSchoolName && (
+                <button
+                  type="button"
+                  id="btn-edit-school"
+                  onClick={() => {
+                    setSidebarSchoolInput(schoolName || "");
+                    setIsEditingSidebarSchool(true);
+                  }}
+                  className="text-[10px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline cursor-pointer bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-3xs"
+                  title="تعديل اسم المدرسة"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>تعديل</span>
+                </button>
+              )}
+            </div>
+
+            {isEditingSidebarSchool ? (
+              <div className="space-y-2 mt-1">
+                <input
+                  type="text"
+                  value={sidebarSchoolInput}
+                  onChange={(e) => setSidebarSchoolInput(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter") {
+                      const trimmed = sidebarSchoolInput.trim();
+                      if (trimmed) {
+                        await handleSchoolNameChange(trimmed);
+                      }
+                      setIsEditingSidebarSchool(false);
+                    } else if (e.key === "Escape") {
+                      setIsEditingSidebarSchool(false);
+                    }
+                  }}
+                  className="w-full text-xs font-bold px-2.5 py-1.5 bg-white border border-blue-400 focus:border-indigo-600 focus:ring-2 focus:ring-blue-100 rounded-lg text-right text-slate-800 outline-none placeholder:text-slate-300"
+                  placeholder="أدخل اسم المدرسة..."
+                  autoFocus
+                />
+                <div className="flex items-center gap-1.5 justify-end">
                   <button
                     type="button"
                     onClick={async () => {
@@ -887,44 +987,40 @@ export default function App() {
                       }
                       setIsEditingSidebarSchool(false);
                     }}
-                    className="p-1 text-emerald-600 hover:text-emerald-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-200 cursor-pointer"
-                    title="حفظ"
+                    className="flex-1 py-1 px-2 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-3xs transition cursor-pointer flex items-center justify-center gap-1"
                   >
-                    <Check className="w-3 h-3" />
+                    <Check className="w-3.5 h-3.5" />
+                    <span>حفظ الاسم</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsEditingSidebarSchool(false)}
-                    className="p-1 text-rose-600 hover:text-rose-700 bg-slate-100 hover:bg-slate-200 rounded border border-slate-200 cursor-pointer"
-                    title="إلغاء"
+                    className="py-1 px-2 text-[11px] font-bold text-slate-600 hover:text-slate-800 bg-slate-200 hover:bg-slate-300 rounded-md transition cursor-pointer flex items-center justify-center gap-1"
                   >
-                    <X className="w-3 h-3" />
+                    <X className="w-3.5 h-3.5" />
+                    <span>إلغاء</span>
                   </button>
                 </div>
-              ) : (
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <p className="text-[10px] text-slate-600 font-extrabold max-w-[110px] truncate">{schoolName || "لم يتم تسجيل اسم المدرسة"}</p>
-                  {isSavingSchoolName ? (
-                    <div className="p-1 bg-slate-50 border border-slate-200 rounded-md flex items-center justify-center shadow-xs" title="جاري الحفظ...">
-                      <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      id="btn-edit-school"
-                      onClick={() => {
-                        setSidebarSchoolInput(schoolName || "");
-                        setIsEditingSidebarSchool(true);
-                      }}
-                      className="text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 p-1 rounded-md transition-all duration-150 cursor-pointer flex items-center justify-center shadow-3xs"
-                      title="تعديل اسم المدرسة"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div 
+                onClick={() => {
+                  setSidebarSchoolInput(schoolName || "");
+                  setIsEditingSidebarSchool(true);
+                }}
+                className="group flex items-center justify-between gap-2 p-1.5 bg-white rounded-lg border border-slate-200 hover:border-blue-300 cursor-pointer transition"
+                title="اضغط للتعديل"
+              >
+                <span className={`text-xs font-extrabold truncate ${schoolName ? "text-slate-800" : "text-slate-400 italic"}`}>
+                  {schoolName || "انقر هنا لكتابة اسم مدرستك..."}
+                </span>
+                {isSavingSchoolName ? (
+                  <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
+                ) : (
+                  <Edit2 className="w-3 h-3 text-slate-400 group-hover:text-blue-600 flex-shrink-0 transition" />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1062,6 +1158,52 @@ export default function App() {
                               </div>
                             </div>
 
+                            {/* Morning Delay Registration Portal Card (بوابة تسجيل التأخر الصباحي) */}
+                            <div 
+                              id="sidebar-morning-delay-portal-container"
+                              className="bg-amber-50/60 rounded-xl p-2 border-2 border-amber-500/40 shadow-3xs space-y-2 relative overflow-hidden mt-2"
+                            >
+                              <div className="absolute top-0 right-0 h-full w-1 bg-amber-500/80"></div>
+                              <button
+                                onClick={() => navigateTo("morning-delay")}
+                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
+                                  appMode === "morning-delay"
+                                    ? "bg-amber-600 text-white shadow-md shadow-amber-600/20"
+                                    : "text-slate-700 hover:bg-amber-100/60 hover:text-amber-900"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className={appMode === "morning-delay" ? "text-white" : "text-amber-600"}><Clock className="w-4 h-4" /></span>
+                                  <span>بوابة تسجيل التأخر الصباحي</span>
+                                </div>
+                                {appMode === "morning-delay" && (
+                                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
+                                )}
+                              </button>
+                              
+                              <div className="px-1">
+                                <button
+                                  type="button"
+                                  id="btn-copy-morning-delay-link"
+                                  onClick={handleCopyMorningDelayLink}
+                                  className="w-full flex items-center justify-between gap-1 text-[10px] text-amber-800 hover:text-amber-900 font-extrabold bg-white hover:bg-amber-50 border border-amber-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
+                                  title="نسخ رابط تسجيل التأخر الصباحي لمشاركته مع المشرفين مباشرة"
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <Copy className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                                    <span>نسخ الرابط لمشرف التأخر</span>
+                                  </div>
+                                  {morningDelayCopied ? (
+                                    <span className="text-emerald-600 flex items-center gap-0.5 text-[9px] font-black">
+                                      <Check className="w-3 h-3 animate-bounce" /> تم النسخ
+                                    </span>
+                                  ) : (
+                                    <ExternalLink className="w-3 h-3 text-slate-400" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
                             {/* Line divider with vertical margin to separate Student/Class/Teacher admin from Stats/Registration */}
                             <div className="my-5 border-t border-slate-200/80"></div>
                           </>
@@ -1105,12 +1247,16 @@ export default function App() {
             type="button"
             onClick={async () => {
               localStorage.removeItem("guest_user_session");
+              localStorage.removeItem("last_admin_tab");
               try {
                 await signOut(auth);
               } catch (err) {
                 console.error("Logout Error:", err);
               }
               setCurrentUser(null);
+              setAppMode("admin");
+              setAdminTab("stats");
+              window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
             }}
             className="w-full flex items-center justify-start gap-2.5 px-3 py-2 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 text-rose-600 hover:text-rose-700 rounded-xl transition-all duration-200 cursor-pointer"
           >
@@ -1121,10 +1267,17 @@ export default function App() {
 
 
         
-        {/* Footer info: Make design smaller and copyright more clear */}
-        <div className="text-center space-y-0.5 pt-1">
-          <p className="text-[10px] text-slate-600 font-extrabold tracking-wide">{schoolName ? `بوابة ${schoolName} الرقمية` : "البوابة الرقمية للرصد والمتابعة"} © {new Date().getFullYear()}</p>
-          <p className="text-[8px] text-slate-400 font-bold">البرمجة والتصميم: أ/ ماجد الناصر</p>
+        {/* Footer info: SmartSchool & Copyright */}
+        <div className="text-center space-y-1 pt-1.5 border-t border-slate-100">
+          <p className="text-[11px] font-black text-indigo-900 tracking-wide">
+            منصة <span className="font-extrabold text-blue-600">SmartSchool</span>
+          </p>
+          <p className="text-[9px] text-slate-500 font-bold">
+            {schoolName ? `بوابة ${schoolName} الرقمية` : "البوابة الرقمية للرصد والمتابعة"}
+          </p>
+          <p className="text-[8px] text-slate-400 font-semibold">
+            جميع الحقوق محفوظة © {new Date().getFullYear()}
+          </p>
         </div>
       </div>
     </div>
@@ -1174,21 +1327,34 @@ export default function App() {
                 globalProgress={globalProgress}
                 setGlobalProgress={setGlobalProgress}
               />
-          ) : appMode === "teacher" ? (
-            <TeacherPortal 
-              grades={grades} 
-              classes={classes} 
-              teachers={teachers} 
-              onRefreshStats={handleRefreshData}
-              activeTab={teacherTab}
-              setActiveTab={setTeacherTab}
-              navigateTo={navigateTo}
-              schoolName={schoolName}
-              isDirectTeacherLink={isDirectTeacherLink}
-              globalProgress={globalProgress}
-              setGlobalProgress={setGlobalProgress}
-            />
-          ) : (
+            ) : appMode === "morning-delay" ? (
+              <MorningDelayPortal
+                grades={grades}
+                classes={classes}
+                students={students}
+                teachers={teachers}
+                onRefreshData={handleRefreshData}
+                navigateTo={navigateTo}
+                schoolName={schoolName}
+                isDirectLink={isDirectMorningDelayLink}
+                globalProgress={globalProgress}
+                setGlobalProgress={setGlobalProgress}
+              />
+            ) : appMode === "teacher" ? (
+              <TeacherPortal 
+                grades={grades} 
+                classes={classes} 
+                teachers={teachers} 
+                onRefreshStats={handleRefreshData}
+                activeTab={teacherTab}
+                setActiveTab={setTeacherTab}
+                navigateTo={navigateTo}
+                schoolName={schoolName}
+                isDirectTeacherLink={isDirectTeacherLink}
+                globalProgress={globalProgress}
+                setGlobalProgress={setGlobalProgress}
+              />
+            ) : (
             <AdminPanel 
               grades={grades} 
               classes={classes} 
@@ -1213,109 +1379,20 @@ export default function App() {
           </div>
         </main>
 
-        {/* Styled Footer (Shown only on mobile view since desktop has sidebar credits) */}
-        <footer className="lg:hidden bg-white border-t border-slate-100 py-4 text-center text-slate-400 text-3xs space-y-1">
-          <p className="font-extrabold text-slate-500">البرمجة والتصميم: أ/ ماجد الناصر</p>
-          <p className="font-semibold text-slate-400">{schoolName || "البوابة الرقمية للمدرسة"}</p>
+        {/* Styled Footer */}
+        <footer className="bg-white border-t border-slate-200/80 py-4 px-6 text-center text-slate-500 text-xs mt-auto flex flex-col items-center justify-center gap-1">
+          <p className="font-black text-slate-800 text-sm flex items-center justify-center gap-1.5">
+            <span>🏫</span>
+            <span>منصة <strong className="text-blue-600 font-black">SmartSchool</strong> الرقمية</span>
+          </p>
+          <p className="font-semibold text-slate-500 text-xs">
+            {schoolName ? `بوابة ${schoolName}` : "البوابة الرقمية للمدرسة"}
+          </p>
+          <p className="font-medium text-slate-400 text-[11px] pt-0.5">
+            جميع الحقوق محفوظة © {new Date().getFullYear()}
+          </p>
         </footer>
       </div>
-
-      {/* 4. DYNAMIC SCHOOL CUSTOMIZATION MODAL (ASKED ON FIRST EMAIL SIGN-IN) */}
-      {showSchoolModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn" dir="rtl">
-          <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 text-right shadow-2xl relative overflow-hidden space-y-5">
-            {/* Elegant Background Accents */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full -mr-12 -mt-12 opacity-60"></div>
-            <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-50 rounded-full -ml-12 -mb-12 opacity-60"></div>
-            
-            <div className="relative space-y-4">
-              {/* Header Icon */}
-              <div className="mx-auto bg-gradient-to-tr from-blue-600 to-indigo-700 p-4 rounded-2xl text-white font-extrabold text-3xl shadow-lg shadow-blue-500/20 w-fit">
-                🏫
-              </div>
-              
-              {/* Text content */}
-              <div className="text-center space-y-1.5">
-                <h3 className="text-base font-black text-slate-800">تخصيص النسخة لمدرستك ⚙️</h3>
-                <p className="text-3xs text-slate-500 font-bold leading-relaxed px-2">
-                  مرحباً بك في منصة <strong className="text-blue-600">SmartSchool</strong> الرقمية! يرجى إدخال اسم مدرستك أو المجمع التعليمي الخاص بك لتخصيص كامل واجهات المنصة، تلوين الهوية، وتوليد التقارير والإحصائيات الحية باسم مدرستك فوراً.
-                </p>
-              </div>
-
-              {/* Form Input */}
-              <div className="space-y-1.5 text-right">
-                <label className="block text-3xs font-black text-slate-400 uppercase tracking-wide">
-                  اسم المدرسة أو المنشأة التعليمية:
-                </label>
-                <input
-                  type="text"
-                  value={schoolInput}
-                  onChange={(e) => {
-                    setSchoolInput(e.target.value);
-                    if (modalError) setModalError("");
-                  }}
-                  placeholder="مثال: مدرسة أم الحمام الثانوية"
-                  className="w-full text-xs font-bold px-4 py-3.5 border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 rounded-xl outline-none transition text-right bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
-                />
-                {modalError && (
-                  <p className="text-[10px] text-rose-500 font-black flex items-center gap-1 mt-1">
-                    <span>⚠️</span>
-                    <span>{modalError}</span>
-                  </p>
-                )}
-              </div>
-
-              {/* Action Button */}
-              <button
-                type="button"
-                disabled={modalSaving}
-                onClick={async () => {
-                  const trimmed = schoolInput.trim();
-                  if (!trimmed) {
-                    setModalError("يرجى كتابة اسم المدرسة للمتابعة وتخصيص نسختك.");
-                    return;
-                  }
-                  if (trimmed.length < 3) {
-                    setModalError("اسم المدرسة يجب أن يتكون من ٣ أحرف على الأقل.");
-                    return;
-                  }
-                  setModalSaving(true);
-                  try {
-                    await saveSchoolName(trimmed);
-                    setSchoolName(trimmed);
-                    const user = auth.currentUser;
-                    if (user && user.email) {
-                      localStorage.setItem(`school_name_${user.email.toLowerCase()}`, trimmed);
-                    }
-                    setShowSchoolModal(false);
-                  } catch (err) {
-                    console.error("Error saving custom school name:", err);
-                    setModalError("حدث خطأ أثناء حفظ الاسم، يرجى المحاولة مرة أخرى.");
-                  } finally {
-                    setModalSaving(false);
-                  }
-                }}
-                className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-blue-500/10 transition-all active:scale-99 hover:scale-[1.01] cursor-pointer disabled:opacity-50"
-              >
-                {modalSaving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>جاري تخصيص وحفظ الهوية...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>حفظ وتخصيص المنصة بالكامل ✨</span>
-                  </>
-                )}
-              </button>
-              
-              <p className="text-[9px] text-slate-400 font-medium text-center">
-                يمكنك تعديل اسم المدرسة في أي وقت لاحقاً من خلال تهيئة الإعدادات
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Persistent Elegant Floating Save Progress Indicator */}
       {isSavingSchoolName && (

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord } from "../types";
 import { 
   addGrade, 
+  addGradesBatch,
   deleteGrade, 
   addClass, 
+  addClassesBatch,
   deleteClass, 
   addTeacher, 
   deleteTeacher, 
@@ -203,6 +205,40 @@ export default function AdminPanel({
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
   const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "selected_attendance" | "behavior" | "student_report">("attendance");
+  const [hasNewBehavior, setHasNewBehavior] = useState<boolean>(false);
+  const [newBehaviorIds, setNewBehaviorIds] = useState<string[]>([]);
+  const [behaviorSearchFilter, setBehaviorSearchFilter] = useState<string>("");
+  const [behaviorDateFilter, setBehaviorDateFilter] = useState<string>("all");
+
+  const getStoredSeenBehaviorIds = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem("school_seen_behavior_ids");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return new Set(parsed);
+      }
+    } catch (e) {
+      console.error("Error reading seen_behavior_ids:", e);
+    }
+    return new Set();
+  };
+
+  const saveStoredSeenBehaviorIds = (ids: Set<string>) => {
+    try {
+      localStorage.setItem("school_seen_behavior_ids", JSON.stringify(Array.from(ids)));
+    } catch (e) {
+      console.error("Error saving seen_behavior_ids:", e);
+    }
+  };
+
+  const seenBehaviorIdsRef = useRef<Set<string>>(getStoredSeenBehaviorIds());
+  const initialBehaviorsLoadedRef = useRef<boolean>(false);
+  const activeStatsTabRef = useRef(activeStatsTab);
+
+  useEffect(() => {
+    activeStatsTabRef.current = activeStatsTab;
+  }, [activeStatsTab]);
+
   const [todayStats, setTodayStats] = useState({
     absentCount: 0,
     behaviorCount: 0,
@@ -451,10 +487,26 @@ export default function AdminPanel({
     totalBehaviorLogs: 0,
     absenteeRankings: [] as { name: string; count: number; className: string }[],
     violationRankings: [] as { name: string; count: number }[],
-    recentLogs: [] as { type: "حضور" | "سلوك"; title: string; subtitle: string; date: string }[]
+    recentLogs: [] as { type: "حضور" | "سلوك"; title: string; subtitle: string; date: string; teacherName?: string; id?: string }[],
+    allBehaviorsList: [] as { id: string; studentName: string; gradeName: string; className: string; violation: string; teacherName: string; date: string; period?: string; timestamp?: any }[],
+    todayBehaviorsList: [] as { id: string; studentName: string; gradeName: string; className: string; violation: string; teacherName: string; date: string; period?: string; timestamp?: any }[]
   });
   const [statsLoading, setStatsLoading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
+
+  const handleClearNewBehaviorAlerts = () => {
+    if (newBehaviorIds.length > 0) {
+      newBehaviorIds.forEach(id => seenBehaviorIdsRef.current.add(id));
+      saveStoredSeenBehaviorIds(seenBehaviorIdsRef.current);
+      setNewBehaviorIds([]);
+      setHasNewBehavior(false);
+    }
+  };
+
+  const handleOpenBehaviorTab = () => {
+    setActiveStatsTab("behavior");
+    // Keeps newBehaviorIds active so new student names display pulsing alerts in the table
+  };
 
   // Feedback Messages
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -469,6 +521,100 @@ export default function AdminPanel({
   const showMessage = (text: string, type: "success" | "error" = "success") => {
     setActionMessage({ type, text });
     setTimeout(() => setActionMessage(null), 4000);
+  };
+
+  const handlePrintSelectedAttendance = () => {
+    const gradeName = grades.find(g => g.id === searchGradeId)?.name || "غير محدد";
+    const className = classes.find(c => c.id === searchClassId)?.name || "غير محدد";
+    const dateStr = searchDate || getTodayDateString();
+
+    try {
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        const rowsHtml = searchAttendanceResult.length === 0
+          ? `<tr><td colspan="5" style="text-align:center; padding:25px; color:#64748b; font-weight:bold;">لا توجد غيابات مسجلة لهذا الفصل في هذا التاريخ 👍</td></tr>`
+          : searchAttendanceResult.map((entry, idx) => `
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px; text-align: center; color: #64748b; font-weight: bold;">${idx + 1}</td>
+                <td style="padding: 10px; font-weight: 800; color: #0f172a;">${entry.studentName}</td>
+                <td style="padding: 10px; text-align: center;">
+                  <span style="padding: 3px 10px; border-radius: 9999px; font-size: 11px; font-weight: 800; background-color: ${entry.status === 'غائب' ? '#fef2f2' : '#fffbeb'}; color: ${entry.status === 'غائب' ? '#dc2626' : '#d97706'}; border: 1px solid ${entry.status === 'غائب' ? '#fecaca' : '#fde68a'};">
+                    ${entry.status}
+                  </span>
+                </td>
+                <td style="padding: 10px; text-align: center; font-weight: 800; color: #334155;">${entry.period || '-'}</td>
+                <td style="padding: 10px; text-align: center; color: #475569;">${entry.teacherName || '-'}</td>
+              </tr>
+            `).join("");
+
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html dir="rtl" lang="ar">
+          <head>
+            <meta charset="utf-8">
+            <title>كشف الغياب المحدد - ${gradeName} (${className})</title>
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+              body { font-family: 'Cairo', system-ui, sans-serif; padding: 25px; direction: rtl; text-align: right; background-color: #fff; color: #1e293b; }
+              .header { text-align: center; margin-bottom: 25px; border-bottom: 2px solid #0284c7; padding-bottom: 15px; }
+              .header h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 800; color: #0f172a; }
+              .header p { margin: 0; font-size: 13px; font-weight: 600; color: #64748b; }
+              .meta-box { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 18px; margin-bottom: 20px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 700; }
+              .meta-item { display: flex; align-items: center; gap: 6px; }
+              .meta-label { color: #64748b; }
+              .meta-val { color: #0284c7; font-weight: 800; }
+              table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+              th { background-color: #f1f5f9; color: #334155; padding: 10px 12px; border: 1px solid #cbd5e1; text-align: right; font-weight: 800; }
+              th:first-child, td:first-child { text-align: center; }
+              .footer { margin-top: 35px; border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: left; font-size: 11px; font-weight: 600; color: #94a3b8; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>📋 كشف الغياب والتأخر المحدد</h1>
+              <p>نظام متابعة الحضور والغياب والملاحظات السلوكية</p>
+            </div>
+            <div class="meta-box">
+              <div class="meta-item"><span class="meta-label">الصف الدراسي:</span> <span class="meta-val">${gradeName}</span></div>
+              <div class="meta-item"><span class="meta-label">الفصل:</span> <span class="meta-val">${className}</span></div>
+              <div class="meta-item"><span class="meta-label">التاريخ:</span> <span class="meta-val">${dateStr}</span></div>
+              <div class="meta-item"><span class="meta-label">إجمالي الحالات:</span> <span class="meta-val">${searchAttendanceResult.length}</span></div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50px; text-align: center;">#</th>
+                  <th>اسم الطالب</th>
+                  <th style="text-align: center;">الحالة</th>
+                  <th style="text-align: center;">الحصة</th>
+                  <th style="text-align: center;">المعلم المعتمد</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+            <div class="footer">
+              تم استخراج التقرير آلياً • ${new Date().toLocaleDateString('ar-SA')} - ${new Date().toLocaleTimeString('ar-SA')}
+            </div>
+            <script>
+              window.onload = function() {
+                setTimeout(function() {
+                  window.print();
+                }, 300);
+              };
+            </script>
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      console.error("Print error:", e);
+      window.print();
+    }
   };
 
   // Set default selected grade for customizer
@@ -585,7 +731,7 @@ export default function AdminPanel({
     );
   };
 
-  const computeStatistics = (attendance: AttendanceRecord[], behaviors: BehaviorRecord[]) => {
+  const computeStatistics = (attendance: AttendanceRecord[], behaviors: BehaviorRecord[], isBehaviorsReady: boolean = true) => {
     try {
       // Absences analysis
       let totalAbsCount = 0;
@@ -645,34 +791,85 @@ export default function AdminPanel({
       });
 
       const sortedBehaviors = [...behaviors]
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .slice(0, 5);
+        .sort((a, b) => b.date.localeCompare(a.date));
 
-      sortedBehaviors.forEach(b => {
+      sortedBehaviors.slice(0, 5).forEach(b => {
         const studentName = students.find(s => s.id === b.studentId)?.name || "طالب";
+        const teacherName = b.teacherName || teachers.find(t => t.id === b.teacherId)?.name || "معلم الحصة";
         recentLogs.push({
           type: "سلوك",
           title: `سلوك سلبي: ${studentName}`,
           subtitle: `المخالفة: ${b.violation}`,
-          date: b.date
+          date: b.date,
+          teacherName,
+          id: b.id
         });
       });
 
       // Sort combined logs by date descending
       recentLogs.sort((a, b) => b.date.localeCompare(a.date));
 
+      // Calculate today stats
+      const TODAY_DATE = getTodayDateString();
+      const todayAttendance = attendance.filter(rec => rec.date === TODAY_DATE);
+
+      // Helper to extract numeric timestamp from BehaviorRecord for accurate sorting
+      const getBehaviorTime = (b: BehaviorRecord): number => {
+        if (b.timestamp) {
+          if (typeof b.timestamp.toMillis === "function") return b.timestamp.toMillis();
+          if (typeof b.timestamp.seconds === "number") return b.timestamp.seconds * 1000;
+          if (typeof b.timestamp === "number") return b.timestamp;
+          if (b.timestamp instanceof Date) return b.timestamp.getTime();
+        }
+        if (b.date) {
+          const parsed = Date.parse(b.date);
+          if (!isNaN(parsed)) return parsed;
+        }
+        return 0;
+      };
+
+      // Sort ALL behaviors so newest behaviors appear at the top
+      const sortedAllBehaviors = [...behaviors].sort((a, b) => {
+        const timeA = getBehaviorTime(a);
+        const timeB = getBehaviorTime(b);
+        if (timeA !== timeB) {
+          return timeB - timeA; // Descending (newest first)
+        }
+        const dateComp = (b.date || "").localeCompare(a.date || "");
+        if (dateComp !== 0) return dateComp;
+        return (b.id || "").localeCompare(a.id || "");
+      });
+
+      const mapBehaviorRecord = (b: BehaviorRecord) => {
+        const studentObj = students.find(s => s.id === b.studentId);
+        const gradeName = studentObj ? (grades.find(g => g.id === studentObj.gradeId)?.name || "") : "";
+        const className = studentObj ? (classes.find(c => c.id === studentObj.classId)?.name || "") : "";
+        const teacherName = b.teacherName || teachers.find(t => t.id === b.teacherId)?.name || "معلم الحصة";
+        return {
+          id: b.id,
+          studentName: studentObj?.name || "طالب",
+          gradeName,
+          className,
+          violation: b.violation,
+          teacherName,
+          date: b.date,
+          period: b.period || "",
+          timestamp: b.timestamp
+        };
+      };
+
+      const allBehaviorsList = sortedAllBehaviors.map(mapBehaviorRecord);
+      const todayBehaviorsList = sortedAllBehaviors.filter(b => b.date === TODAY_DATE).map(mapBehaviorRecord);
+
       setStats({
         totalAbsencesCount: totalAbsCount,
         totalBehaviorLogs: behaviors.length,
         absenteeRankings,
         violationRankings,
-        recentLogs: recentLogs.slice(0, 8)
+        recentLogs: recentLogs.slice(0, 8),
+        allBehaviorsList,
+        todayBehaviorsList
       });
-
-      // Calculate today stats
-      const TODAY_DATE = getTodayDateString();
-      const todayAttendance = attendance.filter(rec => rec.date === TODAY_DATE);
-      const todayBehaviors = behaviors.filter(b => b.date === TODAY_DATE);
 
       // Absent today (unique student counts)
       const todayAbsentSet = new Set<string>();
@@ -682,7 +879,31 @@ export default function AdminPanel({
         }
       });
       const absentCount = todayAbsentSet.size;
-      const behaviorCount = todayBehaviors.length;
+      const behaviorCount = todayBehaviorsList.length;
+
+      // Check if new behavior records were added by a teacher (alert only newly added behaviors)
+      if (isBehaviorsReady && Array.isArray(behaviors)) {
+        const incomingIds = behaviors.map(b => b.id).filter(Boolean) as string[];
+
+        // If local storage was empty on very first load, initialize seenBehaviorIdsRef with current incomingIds
+        const rawStorage = localStorage.getItem("school_seen_behavior_ids");
+        if (!initialBehaviorsLoadedRef.current) {
+          initialBehaviorsLoadedRef.current = true;
+          if (!rawStorage) {
+            incomingIds.forEach(id => seenBehaviorIdsRef.current.add(id));
+            saveStoredSeenBehaviorIds(seenBehaviorIdsRef.current);
+          }
+        }
+
+        const newlyAdded = incomingIds.filter(id => !seenBehaviorIdsRef.current.has(id));
+        if (newlyAdded.length > 0) {
+          setNewBehaviorIds(newlyAdded);
+          setHasNewBehavior(true);
+        } else {
+          setNewBehaviorIds([]);
+          setHasNewBehavior(false);
+        }
+      }
 
       // Group attendance into columns
       const PERIOD_TIMES: Record<string, string> = {
@@ -822,6 +1043,49 @@ export default function AdminPanel({
           }
         }
       });
+
+      // Sort entries ascending first by Class (فصل) and then by Period (حصة)
+      const sortEntriesList = (list: any[]) => {
+        list.sort((a, b) => {
+          const numAStr = getClassNum(a.classCode || "");
+          const numBStr = getClassNum(b.classCode || "");
+          let classA = parseInt(numAStr, 10);
+          let classB = parseInt(numBStr, 10);
+
+          if (isNaN(classA)) {
+            const idx = classes.findIndex(c => c.id === a.classId);
+            classA = idx !== -1 ? idx + 1 : 999;
+          }
+          if (isNaN(classB)) {
+            const idx = classes.findIndex(c => c.id === b.classId);
+            classB = idx !== -1 ? idx + 1 : 999;
+          }
+
+          if (classA !== classB) {
+            return classA - classB;
+          }
+
+          const pNumAStr = getPeriodNum(a.periodCode || "");
+          const pNumBStr = getPeriodNum(b.periodCode || "");
+          const periodA = parseInt(pNumAStr, 10) || 999;
+          const periodB = parseInt(pNumBStr, 10) || 999;
+
+          if (periodA !== periodB) {
+            return periodA - periodB;
+          }
+
+          return (a.studentName || "").localeCompare(b.studentName || "", "ar");
+        });
+      };
+
+      Object.keys(entriesByGrade).forEach(key => {
+        if (entriesByGrade[key]) {
+          sortEntriesList(entriesByGrade[key]);
+        }
+      });
+      sortEntriesList(g1Entries);
+      sortEntriesList(g2Entries);
+      sortEntriesList(g3Entries);
 
       setTodayStats({
         absentCount,
@@ -1029,9 +1293,10 @@ export default function AdminPanel({
       
       let currentAttendance: AttendanceRecord[] = [];
       let currentBehaviors: BehaviorRecord[] = [];
+      let behaviorsReceived = false;
       
       const runCompute = () => {
-        computeStatistics(currentAttendance, currentBehaviors);
+        computeStatistics(currentAttendance, currentBehaviors, behaviorsReceived);
         setStatsLoading(false);
       };
 
@@ -1040,18 +1305,19 @@ export default function AdminPanel({
           currentAttendance = records;
           runCompute();
         },
-        (error) => {
-          console.error("Error in attendance subscription:", error);
+        (_error) => {
+          runCompute();
         }
       );
 
       const unsubBehaviors = subscribeToAllBehaviorRecords(
         (records) => {
           currentBehaviors = records;
+          behaviorsReceived = true;
           runCompute();
         },
-        (error) => {
-          console.error("Error in behaviors subscription:", error);
+        (_error) => {
+          runCompute();
         }
       );
 
@@ -1072,90 +1338,94 @@ export default function AdminPanel({
     const uniqueGradeNames: string[] = Array.from(new Set(gradeLines));
     if (uniqueGradeNames.length === 0) return;
 
+    // Optimistically update grades right away in state
+    const optimisticGradeItems = uniqueGradeNames.map((name, idx) => ({
+      id: `opt_grd_${Date.now()}_${idx}`,
+      name,
+      createdAt: Date.now() + idx
+    }));
+
+    setGrades(prev => {
+      const existingNames = new Set(prev.map(g => g.name.trim()));
+      const toAdd = optimisticGradeItems.filter(g => !existingNames.has(g.name.trim()));
+      return [...prev, ...toAdd];
+    });
+
+    setNewGradeName("");
+    setNewGradeClassNumbers([]);
+
     setSubmitting(prev => ({ ...prev, addGrade: true }));
-    if (setGlobalProgress) {
-      setGlobalProgress({
-        active: true,
-        type: "save",
-        label: uniqueGradeNames.length === 1
-          ? "جاري إضافة الصف الدراسي والفصول المحددة سحابياً..."
-          : `جاري إضافة ${uniqueGradeNames.length} صفوف دراسية سحابياً...`
-      });
-    }
     try {
-      const addedGrades: { id: string; name: string }[] = [];
-      let lastGradeId = "";
+      const addedGrades = await addGradesBatch(uniqueGradeNames);
+      const lastGradeId = addedGrades[addedGrades.length - 1]?.id || "";
 
-      for (const gName of uniqueGradeNames) {
-        const newGradeId: string = await addGrade(gName);
-        lastGradeId = newGradeId;
-        addedGrades.push({ id: newGradeId, name: gName });
-
-        // Add selected class numbers for each grade if configured
-        if (newGradeClassNumbers.length > 0) {
-          const newlyCreatedClasses: typeof classes = [];
+      // Add selected class numbers for each grade if configured using ultra-fast batch
+      if (newGradeClassNumbers.length > 0) {
+        const classesToCreate: { name: string; gradeId: string }[] = [];
+        for (const g of addedGrades) {
           for (const num of newGradeClassNumbers) {
-            const className = `الفصل ${num}`;
-            const newClassId: string = await addClass(className, newGradeId);
-            newlyCreatedClasses.push({ id: newClassId, name: className, gradeId: newGradeId });
+            classesToCreate.push({ name: `الفصل ${num}`, gradeId: g.id });
           }
-
-          setClasses(prev => {
-            const newlyCreatedIds = newlyCreatedClasses.map(c => c.id);
-            const cleanPrev = prev.filter(c => !newlyCreatedIds.includes(c.id));
-            const updated = [...cleanPrev, ...newlyCreatedClasses];
-            const getNumberFromName = (name: string): number => {
-              const match = name.match(/\d+/);
-              return match ? parseInt(match[0], 10) : 999999;
-            };
-            return updated.sort((a, b) => {
-              const numA = getNumberFromName(a.name);
-              const numB = getNumberFromName(b.name);
-              if (numA !== numB) return numA - numB;
-              return a.name.localeCompare(b.name, "ar");
-            });
-          });
         }
+        const createdClasses = await addClassesBatch(classesToCreate);
+        setClasses(prev => {
+          const createdIds = new Set(createdClasses.map(c => c.id));
+          const clean = prev.filter(c => !createdIds.has(c.id));
+          const updated = [...clean, ...createdClasses];
+          const getNumberFromName = (name: string): number => {
+            const match = name.match(/\d+/);
+            return match ? parseInt(match[0], 10) : 999999;
+          };
+          return updated.sort((a, b) => {
+            const numA = getNumberFromName(a.name);
+            const numB = getNumberFromName(b.name);
+            if (numA !== numB) return numA - numB;
+            return a.name.localeCompare(b.name, "ar");
+          });
+        });
       }
 
-      // Update grades state first
+      // Reconcile real grade IDs
       setGrades(prev => {
-        const existingIds = new Set(prev.map(g => g.id));
-        const newItems = addedGrades
-          .filter(g => !existingIds.has(g.id))
-          .map(g => ({ id: g.id, name: g.name, createdAt: Date.now() }));
-        const updated = [...prev, ...newItems];
-        return updated.sort((a, b) => {
-          const timeA = (a as any).createdAt || 0;
-          const timeB = (b as any).createdAt || 0;
-          if (timeA !== timeB) return timeA - timeB; // oldest first
-          return a.name.localeCompare(b.name, "ar");
-        });
+        const optimisticIds = new Set(optimisticGradeItems.map(g => g.id));
+        const filtered = prev.filter(g => !optimisticIds.has(g.id));
+        const existingRealIds = new Set(filtered.map(g => g.id));
+        const newReal = addedGrades.filter(g => !existingRealIds.has(g.id)).map((g, idx) => ({ id: g.id, name: g.name, createdAt: Date.now() + idx }));
+        return [...filtered, ...newReal];
       });
 
-      setNewGradeName("");
-      setNewGradeClassNumbers([]); // Reset to default (empty)
       if (lastGradeId) {
         setSelectedGradeIdForClasses(lastGradeId);
       }
 
+      const firstAddedGradeId = addedGrades[0]?.id;
+      if (firstAddedGradeId) {
+        setTimeout(() => {
+          const el = document.getElementById(`grade-card-${firstAddedGradeId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("ring-4", "ring-indigo-400", "transition-all");
+            setTimeout(() => {
+              el.classList.remove("ring-4", "ring-indigo-400");
+            }, 2500);
+          }
+        }, 150);
+      }
+
       if (uniqueGradeNames.length === 1) {
         if (newGradeClassNumbers.length > 0) {
-          showMessage(`تم إضافة صف "${uniqueGradeNames[0]}" ومعه الفصول الدراسية بنجاح!`);
+          showMessage(`تم إضافة صف "${uniqueGradeNames[0]}" وفصوله بنجاح!`);
         } else {
           showMessage(`تم إضافة صف "${uniqueGradeNames[0]}" بنجاح!`);
         }
       } else {
         showMessage(`تم إضافة ${uniqueGradeNames.length} صفوف دراسية بنجاح!`);
       }
-      onRefreshData().catch(console.error);
-    } catch (e) {
+    } catch (e: any) {
+      console.error("Error adding grade:", e);
       showMessage("حدث خطأ أثناء إضافة الصفوف الدراسية", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addGrade: false }));
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -1165,9 +1435,6 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف ${name}؟ سيتم حذف جميع الفصول والطلاب التابعين له تلقائياً ولا يمكن التراجع عن هذا الإجراء.`,
       async () => {
         setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الصف وفصوله وطلابه...` });
-        }
         try {
           setGrades(prev => prev.filter(g => g.id !== id));
           setClasses(prev => prev.filter(c => c.gradeId !== id));
@@ -1177,14 +1444,10 @@ export default function AdminPanel({
           }
           await deleteGrade(id);
           showMessage("تم حذف الصف وفصوله بنجاح!");
-          onRefreshData().catch(console.error);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
         } finally {
           setSubmitting(prev => ({ ...prev, ['deleteGrade_' + id]: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -1202,58 +1465,39 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addClass: true }));
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الفصول الدراسية المحددة سحابياً..." });
-    }
     try {
-      let addedCount = 0;
-      let alreadyExistsCount = 0;
-      const updatedClasses = [...classes];
+      const classesToAdd = selectedClassNumbers.map(num => ({
+        name: `الفصل ${num}`,
+        gradeId: selectedGradeIdForClasses
+      }));
 
-      for (const num of selectedClassNumbers) {
-        const className = `الفصل ${num}`;
-        // Check if class already exists in this grade
-        const existsInGrade = updatedClasses.some(c => c.gradeId === selectedGradeIdForClasses && c.name?.trim() === className.trim());
-        if (existsInGrade) {
-          alreadyExistsCount++;
-          continue;
-        }
+      const added = await addClassesBatch(classesToAdd);
 
-        const newId = await addClass(className, selectedGradeIdForClasses);
-        if (!updatedClasses.some(c => c.id === newId || (c.gradeId === selectedGradeIdForClasses && c.name?.trim() === className.trim()))) {
-          updatedClasses.push({ id: newId, name: className, gradeId: selectedGradeIdForClasses });
-        }
-        addedCount++;
-      }
-
-      const getNumberFromName = (name: string): number => {
-        const match = name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 999999;
-      };
-
-      updatedClasses.sort((a, b) => {
-        const numA = getNumberFromName(a.name);
-        const numB = getNumberFromName(b.name);
-        if (numA !== numB) return numA - numB;
-        return a.name.localeCompare(b.name, "ar");
+      setClasses(prev => {
+        const addedIds = new Set(added.map(a => a.id));
+        const clean = prev.filter(c => !addedIds.has(c.id));
+        const updated = [...clean, ...added];
+        const getNumberFromName = (name: string): number => {
+          const match = name.match(/\d+/);
+          return match ? parseInt(match[0], 10) : 999999;
+        };
+        return updated.sort((a, b) => {
+          const numA = getNumberFromName(a.name);
+          const numB = getNumberFromName(b.name);
+          if (numA !== numB) return numA - numB;
+          return a.name.localeCompare(b.name, "ar");
+        });
       });
 
-      setClasses(updatedClasses);
-
-      if (addedCount > 0) {
-        showMessage(`تم إضافة ${addedCount} فصل بنجاح!`);
-      } else if (alreadyExistsCount > 0) {
+      if (added.length > 0) {
+        showMessage(`تم إضافة ${added.length} فصل بنجاح!`);
+      } else {
         showMessage("جميع الفصول المحددة مسجلة مسبقاً في هذا الصف", "error");
       }
-
-      onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة الفصول", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addClass: false }));
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -1566,6 +1810,7 @@ export default function AdminPanel({
       await addStudentsBatch(studentsList);
       setPastedStudentsText("");
       setParsedStudentNames([]);
+      setShowAddStudentSection(false);
       await onRefreshData();
       
       if (totalSkipped > 0) {
@@ -1871,13 +2116,47 @@ export default function AdminPanel({
             <div className="flex items-center gap-2">
               <span className="text-base">📋</span>
               <h2 className="text-sm md:text-base font-black text-indigo-950">
-                رصد ومتابعة الغياب
+                {schoolName ? `متابعة الغياب والسلوك - ${schoolName}` : "متابعة الغياب والسلوك"}
               </h2>
             </div>
             <span className="text-xs font-bold text-indigo-600/90 bg-white/80 border border-indigo-100 px-3 py-1 rounded-lg shadow-3xs">
-              منصة رصد ومتابعة الغياب والسلوك للطلاب
+              {schoolName ? `منصة ${schoolName} لرصد ومتابعة الغياب والسلوك` : "منصة رصد ومتابعة الغياب والسلوك للطلاب"}
             </span>
           </div>
+
+          {/* Alert Banner for New Behaviors */}
+          {(hasNewBehavior || newBehaviorIds.length > 0) && activeStatsTab !== "behavior" && (
+            <div 
+              dir="rtl" 
+              className="bg-gradient-to-r from-amber-500 via-rose-500 to-amber-600 text-white p-3.5 rounded-xl shadow-md flex flex-wrap items-center justify-between gap-3 animate-pulse border-2 border-amber-300 ring-4 ring-amber-400/30 print:hidden cursor-pointer hover:brightness-105 transition-all"
+              onClick={handleOpenBehaviorTab}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl animate-bounce">🔔</span>
+                <div>
+                  <p className="text-xs font-black flex items-center gap-2">
+                    <span>تنبيه: قائمة أسماء وملاحظات جديدة!</span>
+                    <span className="bg-white text-rose-700 text-[10px] font-black px-2 py-0.5 rounded-full shadow-2xs">
+                      {newBehaviorIds.length > 0 ? `${newBehaviorIds.length} اسم جديد` : "تم رصد مخالفة جديدة"}
+                    </span>
+                  </p>
+                  <p className="text-[11px] font-extrabold text-amber-50 mt-0.5">
+                    تم رصد ملاحظات أسماء جديدة في قائمة السلوكيات من المعلمين. اضغط هنا للانتقال مباشرة لقائمة الأسماء الجديدة.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenBehaviorTab();
+                }}
+                className="bg-white text-amber-950 hover:bg-amber-50 font-black text-xs px-3.5 py-1.5 rounded-lg shadow-sm border border-amber-200 shrink-0 transition cursor-pointer"
+              >
+                استعراض الأسماء والسلوكيات 👈
+              </button>
+            </div>
+          )}
 
           {/* Sub-navigation Tabs & Print bar */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white p-2 rounded-xl border border-slate-100 shadow-3xs print:hidden">
@@ -1909,8 +2188,8 @@ export default function AdminPanel({
               </button>
               <button
                 type="button"
-                onClick={() => setActiveStatsTab("behavior")}
-                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
+                onClick={handleOpenBehaviorTab}
+                className={`relative px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "behavior"
                     ? "bg-white text-amber-700 shadow-3xs border border-slate-200/50"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -1918,6 +2197,12 @@ export default function AdminPanel({
               >
                 <span>📝</span>
                 <span>السلوك</span>
+                {(hasNewBehavior || newBehaviorIds.length > 0) && activeStatsTab !== "behavior" && (
+                  <span className="inline-flex items-center gap-1 bg-gradient-to-r from-rose-500 to-red-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full animate-pulse shadow-2xs border border-rose-300/40">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                    <span>جديد {newBehaviorIds.length > 0 ? `(${newBehaviorIds.length})` : ""}</span>
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -1936,11 +2221,17 @@ export default function AdminPanel({
             {/* Print Action */}
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={() => {
+                if (activeStatsTab === "selected_attendance") {
+                  handlePrintSelectedAttendance();
+                } else {
+                  window.print();
+                }
+              }}
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-98 transition-all cursor-pointer"
             >
               <span>🖨️</span>
-              <span>طباعة الملخص</span>
+              <span>{activeStatsTab === "selected_attendance" ? "طباعة الغياب المحدد" : "طباعة الملخص"}</span>
             </button>
           </div>
 
@@ -2139,12 +2430,22 @@ export default function AdminPanel({
           {/* TAB CONTENT: SPECIFIC SEARCH (غياب محدد) */}
           {activeStatsTab === "selected_attendance" && (
             <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn">
-              <div className="border-b border-slate-100 pb-3">
-                <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                  <span>🔍</span>
-                  <span>الاستعلام عن غياب فصل معين</span>
-                </h3>
-                <p className="text-2xs text-slate-400 font-bold mt-0.5">اختر الصف والفصل والتاريخ المحددين لعرض سجل الغياب والتأخر المفصل.</p>
+              <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                    <span>🔍</span>
+                    <span>الاستعلام عن غياب فصل معين</span>
+                  </h3>
+                  <p className="text-2xs text-slate-400 font-bold mt-0.5">اختر الصف والفصل والتاريخ المحددين لعرض سجل الغياب والتأخر المفصل.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handlePrintSelectedAttendance}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-95 transition cursor-pointer shrink-0"
+                >
+                  <span>🖨️</span>
+                  <span>طباعة الغياب المحدد</span>
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2240,62 +2541,182 @@ export default function AdminPanel({
             </div>
           )}
 
-          {/* TAB CONTENT: TODAY BEHAVIORS (السلوك) */}
-          {activeStatsTab === "behavior" && (
-            <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn">
-              <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                    <span>📝</span>
-                    <span>الرصد السلوكي لليوم</span>
-                  </h3>
-                  <p className="text-2xs text-slate-400 font-bold mt-0.5">استعراض كافة الملاحظات والمخالفات السلوكية التي تم رصدها اليوم من قبل المعلمين.</p>
+          {/* TAB CONTENT: ALL BEHAVIORS (السلوك) */}
+          {activeStatsTab === "behavior" && (() => {
+            let displayedBehaviors = stats.allBehaviorsList || [];
+
+            if (behaviorDateFilter === "new_only") {
+              displayedBehaviors = displayedBehaviors.filter(b => newBehaviorIds.includes(b.id));
+            } else if (behaviorDateFilter === "today") {
+              displayedBehaviors = displayedBehaviors.filter(b => b.date === getTodayDateString());
+            } else if (behaviorDateFilter !== "all" && behaviorDateFilter) {
+              displayedBehaviors = displayedBehaviors.filter(b => b.date === behaviorDateFilter);
+            }
+
+            if (behaviorSearchFilter.trim()) {
+              const query = behaviorSearchFilter.trim().toLowerCase();
+              displayedBehaviors = displayedBehaviors.filter(b => 
+                (b.studentName || "").toLowerCase().includes(query) ||
+                (b.violation || "").toLowerCase().includes(query) ||
+                (b.teacherName || "").toLowerCase().includes(query) ||
+                (b.gradeName || "").toLowerCase().includes(query) ||
+                (b.className || "").toLowerCase().includes(query)
+              );
+            }
+
+            return (
+              <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn">
+                <div className="border-b border-slate-100 pb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 flex-wrap">
+                      <span>📝</span>
+                      <span>سجل المخالفات والسلوكيات (لكافة الأيام)</span>
+                      {newBehaviorIds.length > 0 && (
+                        <span className="bg-gradient-to-r from-rose-500 to-amber-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full animate-pulse shadow-2xs border border-rose-300/50 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                          <span>قائمة الأسماء الجديدة ({newBehaviorIds.length})</span>
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-2xs text-slate-400 font-bold mt-0.5">
+                      استعراض كافة الملاحظات والمخالفات السلوكية المرصودة لجميع الأيام (الأحدث في الأعلى).
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-50 text-amber-700 text-3xs font-extrabold px-3 py-1.5 rounded-xl border border-amber-150 flex items-center gap-1">
+                      <span>📊</span>
+                      <span>إجمالي السلوكيات: {stats.allBehaviorsList.length}</span>
+                    </span>
+                  </div>
                 </div>
-                <span className="bg-amber-50 text-amber-700 text-3xs font-extrabold px-3 py-1 rounded-xl border border-amber-150">
-                  {getTodayFormattedArabic()}
-                </span>
-              </div>
 
-              <div className="border border-slate-100 rounded-xl overflow-hidden">
-                <table className="w-full text-right text-xs" dir="rtl">
-                  <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
-                    <tr>
-                      <th className="py-2.5 px-4 text-right">رقم</th>
-                      <th className="py-2.5 px-4 text-right">اسم الطالب</th>
-                      <th className="py-2.5 px-4 text-right">الصف / الفصل</th>
-                      <th className="py-2.5 px-4 text-right">المخالفة / الملاحظة</th>
-                      <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
-                      {!isReadOnly && <th className="py-2.5 px-2 text-center">⚙️</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {stats.recentLogs.filter(l => l.type === "سلوك" && l.date === getTodayDateString()).length === 0 ? (
+                {/* Filter and Search Bar */}
+                <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/70 p-3 rounded-xl border border-slate-100">
+                  <div className="relative w-full md:w-72">
+                    <input
+                      type="text"
+                      value={behaviorSearchFilter}
+                      onChange={(e) => setBehaviorSearchFilter(e.target.value)}
+                      placeholder="بحث باسم الطالب، المخالفة، المعلم..."
+                      className="w-full bg-white border border-slate-200 text-slate-800 text-xs rounded-xl py-2 pr-9 pl-3 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold placeholder:text-slate-400"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                    {newBehaviorIds.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setBehaviorDateFilter(behaviorDateFilter === "new_only" ? "all" : "new_only")}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs border ${
+                            behaviorDateFilter === "new_only"
+                              ? "bg-rose-600 text-white border-rose-700 ring-2 ring-rose-400/50"
+                              : "bg-gradient-to-r from-amber-500 via-rose-500 to-amber-600 text-white border-amber-300 animate-pulse hover:brightness-105"
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                          <span>🔔 قائمة الأسماء الجديدة ({newBehaviorIds.length})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearNewBehaviorAlerts}
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer border border-slate-200 flex items-center gap-1 shadow-2xs"
+                          title="تعليم كافة الأسماء كتم الاطلاع ومسح التنبيهات"
+                        >
+                          <span>✓</span>
+                          <span>تأكيد الاطلاع ومسح التنبيه</span>
+                        </button>
+                      </>
+                    )}
+
+                    <span className="text-2xs font-extrabold text-slate-500">التاريخ:</span>
+                    <select
+                      value={behaviorDateFilter}
+                      onChange={(e) => setBehaviorDateFilter(e.target.value)}
+                      className="bg-white border border-slate-200 text-slate-700 text-xs rounded-xl py-2 px-3 font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    >
+                      <option value="all">كافة الأيام (الكل)</option>
+                      <option value="today">اليوم فقط ({getTodayDateString()})</option>
+                      {newBehaviorIds.length > 0 && (
+                        <option value="new_only">🔔 قائمة الأسماء الجديدة ({newBehaviorIds.length})</option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="border border-slate-100 rounded-xl overflow-hidden">
+                  <table className="w-full text-right text-xs" dir="rtl">
+                    <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
                       <tr>
-                        <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 font-extrabold">
-                          لا توجد مخالفات سلوكية مرصودة اليوم 👍
-                        </td>
+                        <th className="py-2.5 px-4 text-right">رقم</th>
+                        <th className="py-2.5 px-4 text-right">
+                          <div className="flex items-center gap-1.5">
+                            <span>اسم الطالب</span>
+                            {newBehaviorIds.length > 0 && (
+                              <span className="inline-flex items-center gap-1 text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full text-[10px] font-black animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
+                                <span>جديد 🔔</span>
+                              </span>
+                            )}
+                          </div>
+                        </th>
+                        <th className="py-2.5 px-4 text-right">الصف / الفصل</th>
+                        <th className="py-2.5 px-4 text-right">المخالفة / الملاحظة</th>
+                        <th className="py-2.5 px-4 text-right">التاريخ والحصة</th>
+                        <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
+                        {!isReadOnly && <th className="py-2.5 px-2 text-center">⚙️</th>}
                       </tr>
-                    ) : (
-                      stats.recentLogs
-                        .filter(l => l.type === "سلوك" && l.date === getTodayDateString())
-                        .map((log, index) => {
-                          // Find student and class
-                          const studentName = log.title.replace("سلوك سلبي: ", "");
-                          const studentObj = students.find(s => s.name === studentName);
-                          const gradeName = studentObj ? (grades.find(g => g.id === studentObj.gradeId)?.name || "") : "";
-                          const className = studentObj ? (classes.find(c => c.id === studentObj.classId)?.name || "") : "";
-
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {displayedBehaviors.length === 0 ? (
+                        <tr>
+                          <td colSpan={isReadOnly ? 6 : 7} className="py-12 text-center text-slate-400 font-extrabold">
+                            لا توجد مخالفات سلوكية مرصودة مطابقة للبحث 👍
+                          </td>
+                        </tr>
+                      ) : (
+                        displayedBehaviors.map((log, index) => {
+                          const isNew = newBehaviorIds.includes(log.id);
+                          const isToday = log.date === getTodayDateString();
                           return (
-                            <tr key={index} className="hover:bg-slate-50/50 transition">
+                            <tr 
+                              key={log.id || index} 
+                              className={`transition-all duration-300 ${
+                                isNew 
+                                  ? "bg-amber-100/90 ring-2 ring-amber-400/90 animate-pulse font-extrabold shadow-2xs" 
+                                  : "hover:bg-slate-50/50"
+                              }`}
+                            >
                               <td className="py-3 px-4 font-bold text-slate-400">{index + 1}</td>
-                              <td className="py-3 px-4 font-extrabold text-slate-800">{studentName}</td>
-                              <td className="py-3 px-4 font-bold text-slate-600">{gradeName} - {className}</td>
+                              <td className="py-3 px-4 font-extrabold text-slate-800 flex items-center gap-2">
+                                <span className={isNew ? "text-amber-950 font-black text-sm animate-pulse" : ""}>{log.studentName}</span>
+                                {isNew && (
+                                  <span className="inline-flex items-center gap-1 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded-full animate-bounce shadow-sm border border-rose-300">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                                    <span>طالب جديد 🔔</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 font-bold text-slate-600">{log.gradeName} - {log.className}</td>
                               <td className="py-3 px-4">
                                 <span className="text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100 font-extrabold text-3xs">
-                                  {log.subtitle.replace("المخالفة: ", "")}
+                                  {log.violation}
                                 </span>
                               </td>
-                              <td className="py-3 px-4 text-slate-500 font-medium">معلم الحصة</td>
+                              <td className="py-3 px-4 font-bold text-slate-600">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-slate-700">{log.date}</span>
+                                  {log.period && <span className="text-slate-400 text-3xs">({log.period})</span>}
+                                  {isToday && (
+                                    <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-1.5 py-0.5 rounded-full">اليوم</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-slate-800 font-extrabold flex items-center gap-1.5">
+                                <span className="text-slate-400 text-3xs">👨‍🏫</span>
+                                <span>{log.teacherName}</span>
+                              </td>
                               {!isReadOnly && (
                                 <td className="py-3 px-2 text-center">
                                   <button
@@ -2307,19 +2728,10 @@ export default function AdminPanel({
                                         async () => {
                                           try {
                                             setStatsLoading(true);
-                                            // Find and delete behavior record matching details
-                                            const bRecords = await getAllBehaviorRecords();
-                                            const matched = bRecords.find(b => {
-                                              const s = students.find(st => st.id === b.studentId);
-                                              return s?.name === studentName && b.violation === log.subtitle.replace("المخالفة: ", "") && b.date === getTodayDateString();
-                                            });
-                                            
-                                            if (matched) {
-                                              const { deleteBehaviorRecord } = await import("../dbService");
-                                              await deleteBehaviorRecord(matched.id);
-                                              showMessage("تم حذف السلوك السلبي بنجاح!");
-                                              await loadStatistics();
-                                            }
+                                            const { deleteBehaviorRecord } = await import("../dbService");
+                                            await deleteBehaviorRecord(log.id);
+                                            showMessage("تم حذف السلوك بنجاح!");
+                                            await loadStatistics();
                                           } catch (e) {
                                             console.error("Error deleting behavior record:", e);
                                           } finally {
@@ -2338,12 +2750,13 @@ export default function AdminPanel({
                             </tr>
                           );
                         })
-                    )}
-                  </tbody>
-                </table>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB CONTENT: STUDENT DETAILED REPORT (تقرير الطالب) */}
           {activeStatsTab === "student_report" && (
@@ -2677,6 +3090,7 @@ export default function AdminPanel({
                     return (
                       <div
                         key={`grade-card-${grade.id}-${idx}`}
+                        id={`grade-card-${grade.id}`}
                         className="bg-white rounded-2xl border border-slate-200/90 shadow-3xs p-4 sm:p-5 space-y-4 transition-all"
                       >
                         {/* Grade Header Row */}
@@ -2747,22 +3161,30 @@ export default function AdminPanel({
                                   type="button"
                                   onClick={async () => {
                                     if (exists && cls) {
-                                      handleDeleteClass(cls.id, cls.name);
+                                      // Instant optimistic removal
+                                      setClasses(prev => prev.filter(c => c.id !== cls.id));
+                                      deleteClass(cls.id).catch(console.error);
                                     } else {
+                                      const className = `الفصل ${num}`;
+                                      const tempId = `temp_cls_${Date.now()}_${num}`;
+                                      // Instant optimistic addition
+                                      setClasses((prev) => {
+                                        if (prev.some(c => c.gradeId === grade.id && c.name?.trim() === className)) {
+                                          return prev;
+                                        }
+                                        return [
+                                          ...prev,
+                                          { id: tempId, name: className, gradeId: grade.id },
+                                        ];
+                                      });
+
                                       try {
-                                        const className = `الفصل ${num}`;
                                         const newId = await addClass(className, grade.id);
-                                        setClasses((prev) => {
-                                          if (prev.some(c => c.id === newId || (c.gradeId === grade.id && c.name?.trim() === className))) {
-                                            return prev;
-                                          }
-                                          return [
-                                            ...prev,
-                                            { id: newId, name: className, gradeId: grade.id },
-                                          ];
-                                        });
-                                        onRefreshData().catch(console.error);
+                                        setClasses((prev) => 
+                                          prev.map(c => c.id === tempId ? { ...c, id: newId } : c)
+                                        );
                                       } catch (err) {
+                                        setClasses(prev => prev.filter(c => c.id !== tempId));
                                         showMessage("حدث خطأ أثناء إضافة الفصل", "error");
                                       }
                                     }
@@ -3258,106 +3680,55 @@ export default function AdminPanel({
               {/* Collapsible Student Insertion Forms */}
               {showAddStudentSection && (
                 <div className="bg-white rounded-2xl shadow-3xs border border-slate-200/80 p-5 space-y-4 animate-fadeIn">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-                      <UserPlus className="w-4 h-4 text-indigo-600" />
-                      <span>تسجيل طالب جديد في {classes.find(c => c.id === selectedClassId)?.name}</span>
-                    </h3>
-                    
-                    {/* Add Mode switcher */}
-                    <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                      <button
-                        type="button"
-                        onClick={() => setStudentAddMode("individual")}
-                        className={`px-3 py-1 rounded-md text-3xs font-extrabold transition cursor-pointer ${
-                          studentAddMode === "individual" ? "bg-white text-indigo-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        طالب فردي ✍️
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStudentAddMode("excel")}
-                        className={`px-3 py-1 rounded-md text-3xs font-extrabold transition cursor-pointer ${
-                          studentAddMode === "excel" ? "bg-white text-indigo-600 shadow-3xs" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        نسخ ولصق الأسماء 📋
-                      </button>
+
+
+                  <form onSubmit={handleStudentImportSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-black text-slate-800 mb-2">
+                        أدخل أو انسخ أسماء الطلاب
+                      </label>
+
+                      <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3 mb-3 text-xs text-emerald-900 font-semibold flex items-start gap-2">
+                        <span className="text-base leading-none">💡</span>
+                        <span>يمكنك نسخ عمود الأسماء من ملف Excel ولصقها هنا مباشرة، أو كتابة الأسماء بمعدل اسم واحد في كل سطر.</span>
+                      </div>
+
+                      <textarea
+                        rows={5}
+                        placeholder={`أدخل الأسماء هنا، اسم في كل سطر:
+خالد محمد العتيبي
+سلطان عبد الله الشمري
+سارة فهد السديري`}
+                        value={pastedStudentsText}
+                        onChange={(e) => setPastedStudentsText(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-3 text-xs font-semibold text-slate-800 focus:outline-none resize-none placeholder:text-slate-400/80 leading-relaxed font-sans"
+                      />
                     </div>
-                  </div>
 
-                  {studentAddMode === "individual" ? (
-                    <form onSubmit={handleAddStudentSubmit} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                      <div className="sm:col-span-9">
-                        <label className="block text-3xs font-extrabold text-slate-500 mb-1">اسم الطالب ثلاثي أو رباعي</label>
-                        <input
-                          type="text"
-                          placeholder="مثال: خالد عبد العزيز اليوسف..."
-                          value={newStudentName}
-                          onChange={(e) => setNewStudentName(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div className="sm:col-span-3">
-                        <button
-                          type="submit"
-                          disabled={submitting.addStudent}
-                          className="w-full bg-[#5046e5] hover:bg-indigo-700 disabled:bg-slate-300 text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition cursor-pointer"
-                        >
-                          {submitting.addStudent ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Plus className="w-4 h-4" />
-                          )}
-                          <span>إضافة الطالب</span>
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <form onSubmit={handleStudentImportSubmit} className="space-y-4">
-                      <div>
-                        <label className="block text-3xs font-extrabold text-slate-500 mb-1">انسخ قائمة الطلاب من إكسل أو وورد وألصقها هنا (اسم في كل سطر):</label>
-                        <textarea
-                          rows={4}
-                          placeholder="خالد عبد العزيز اليوسف&#10;محمد أحمد السديري&#10;فهد سليمان الدوسري"
-                          value={pastedStudentsText}
-                          onChange={(e) => setPastedStudentsText(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none resize-none font-mono"
-                        />
-                      </div>
-
-                      {parsedStudentNames.length > 0 && (
-                        <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3 space-y-1.5">
-                          <p className="text-3xs font-extrabold text-indigo-800 flex items-center gap-1">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>تم اكتشاف {parsedStudentNames.length} طالب جاهز للاستيراد:</span>
-                          </p>
-                          <div className="max-h-20 overflow-y-auto text-3xs text-slate-600 font-semibold pr-1">
-                            {parsedStudentNames.slice(0, 3).map((name, i) => (
-                              <p key={i} className="py-0.5">👤 {name}</p>
-                            ))}
-                            {parsedStudentNames.length > 3 && (
-                              <p className="text-slate-400">...و {parsedStudentNames.length - 3} طلاب آخرين</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
+                    <div className="flex items-center gap-3 pt-2">
                       <button
                         type="submit"
                         disabled={parsedStudentNames.length === 0 || statsLoading || submitting.importStudents}
-                        className="w-full bg-[#5046e5] hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold py-2.5 rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-xs transition cursor-pointer"
+                        className="bg-[#5046e5] hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold px-6 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        {submitting.importStudents ? (
+                        {submitting.importStudents && (
                           <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Plus className="w-4 h-4" />
                         )}
-                        <span>اعتماد واستيراد {parsedStudentNames.length} طالب دفعة واحدة</span>
+                        <span>حفظ وتسجيل الطلاب</span>
                       </button>
-                    </form>
-                  )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddStudentSection(false);
+                          setPastedStudentsText("");
+                        }}
+                        className="text-slate-600 hover:text-slate-900 font-bold text-xs px-3 py-2 transition cursor-pointer"
+                      >
+                        إلغاء الأمر
+                      </button>
+                    </div>
+                  </form>
                 </div>
               )}
 
@@ -3652,6 +4023,7 @@ export default function AdminPanel({
                       return (
                         <div
                           key={`struct-grade-${grade.id}-${idx}`}
+                          id={`grade-card-${grade.id}`}
                           className="bg-white rounded-2xl border border-slate-200/90 shadow-3xs p-4 sm:p-5 space-y-4 transition-all"
                         >
                           {/* Grade Header Row */}

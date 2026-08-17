@@ -6,9 +6,9 @@ import firebaseConfig from "../firebase-applet-config.json";
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with robust connection settings (enabling auto long-polling to prevent proxy/firewall blockages)
+// Initialize Firestore with robust connection settings (forcing long-polling to prevent proxy/firewall blockages)
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
 }, (firebaseConfig as Record<string, string>).firestoreDatabaseId || undefined);
 
 // Initialize Auth

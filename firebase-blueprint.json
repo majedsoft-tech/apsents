@@ -70,6 +70,49 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["studentId", "date", "period", "violation"]
+    },
+    "MorningDelay": {
+      "title": "MorningDelay",
+      "description": "Morning delay tardiness record for a student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "gradeId": { "type": "string" },
+        "gradeName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "date": { "type": "string" },
+        "arrivalTime": { "type": "string" },
+        "delayMinutes": { "type": "number" },
+        "reason": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["studentId", "date", "arrivalTime", "reason"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "School settings including school name",
+      "type": "object",
+      "properties": {
+        "schoolName": { "type": "string" }
+      }
+    },
+    "RegisteredUser": {
+      "title": "RegisteredUser",
+      "description": "Registered user profile for school administrators",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastLogin": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "schoolName": { "type": "string" },
+        "status": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -96,6 +139,18 @@
     "behaviors/{behaviorId}": {
       "schema": "Behavior",
       "description": "Collection of student behavior records"
+    },
+    "morning_delays/{delayId}": {
+      "schema": "MorningDelay",
+      "description": "Collection of morning delay records"
+    },
+    "settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Collection of school settings"
+    },
+    "registered_users/{userId}": {
+      "schema": "RegisteredUser",
+      "description": "Collection of registered users"
     }
   }
 }

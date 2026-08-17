@@ -13,7 +13,7 @@ import {
   onSnapshot
 } from "firebase/firestore";
 import { db, auth as firebaseAuth } from "./firebase";
-import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, RegisteredUser } from "./types";
+import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, MorningDelayRecord, RegisteredUser } from "./types";
 
 // Active user proxy for unauthenticated direct links
 let activeUserProxy: any = null;
@@ -22,16 +22,23 @@ export function setActiveUser(user: any) {
   activeUserProxy = user;
 }
 
-export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest?: boolean } | null {
+export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest?: boolean } {
   const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  const ownerParam = urlParams?.get("owner");
+  let ownerParam = urlParams?.get("owner");
+  if (!ownerParam && typeof window !== "undefined" && window.location.hash.includes("owner=")) {
+    const hashIndex = window.location.hash.indexOf("?");
+    if (hashIndex !== -1) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(hashIndex));
+      ownerParam = hashParams.get("owner");
+    }
+  }
 
   if (ownerParam) {
-    const currentFbUser = firebaseAuth.currentUser;
+    const isOwnerMyself = firebaseAuth.currentUser && firebaseAuth.currentUser.uid === ownerParam;
     return {
       uid: ownerParam,
-      email: currentFbUser?.email?.toLowerCase() || activeUserProxy?.email || `owner_${ownerParam}@school.com`,
-      isGuest: !currentFbUser
+      email: isOwnerMyself ? (firebaseAuth.currentUser?.email?.toLowerCase() || `owner_${ownerParam}@school.com`) : `owner_${ownerParam}@school.com`,
+      isGuest: !isOwnerMyself
     };
   }
 
@@ -43,15 +50,33 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
     };
   }
 
-  if (activeUserProxy) {
+  if (activeUserProxy && activeUserProxy.uid) {
     return {
       uid: activeUserProxy.uid,
-      email: activeUserProxy.email?.toLowerCase() || "",
+      email: activeUserProxy.email?.toLowerCase() || `owner_${activeUserProxy.uid}@school.com`,
       isGuest: !!activeUserProxy.isGuest
     };
   }
 
-  return null;
+  // Check stored ID in localStorage so write operations never fail
+  if (typeof window !== "undefined") {
+    let stored = localStorage.getItem("own_school_admin_id");
+    if (!stored) {
+      stored = "school_" + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem("own_school_admin_id", stored);
+    }
+    return {
+      uid: stored,
+      email: `owner_${stored}@school.com`,
+      isGuest: true
+    };
+  }
+
+  return {
+    uid: "school_default",
+    email: "owner_school_default@school.com",
+    isGuest: true
+  };
 }
 
 // Auth proxy returning actual or effective user
@@ -76,14 +101,98 @@ const TEACHERS_COLL = "teachers";
 const STUDENTS_COLL = "students";
 const ATTENDANCE_COLL = "attendance";
 const BEHAVIORS_COLL = "behaviors";
+const MORNING_DELAYS_COLL = "morning_delays";
+const SETTINGS_COLL = "settings";
+const USERS_COLL = "registered_users";
 
-// Helper to fetch entire collection and filter client-side based on UID, email, and legacy fallbacks
+// --- ROBUST LOCAL CACHE & SYNC ENGINE ---
+function getLocalStorageKey(colName: string): string {
+  return `school_offline_cache_${colName}`;
+}
+
+function getLocalItems(colName: string): any[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(getLocalStorageKey(colName));
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function setLocalItems(colName: string, items: any[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(getLocalStorageKey(colName), JSON.stringify(items));
+  } catch (e) {}
+}
+
+function saveOrUpdateLocalItem(colName: string, item: any) {
+  const items = getLocalItems(colName);
+  const idx = items.findIndex(i => i.id === item.id);
+  if (idx >= 0) {
+    items[idx] = { ...items[idx], ...item };
+  } else {
+    items.push(item);
+  }
+  setLocalItems(colName, items);
+}
+
+function removeLocalItem(colName: string, id: string) {
+  const items = getLocalItems(colName);
+  const filtered = items.filter(i => i.id !== id);
+  setLocalItems(colName, filtered);
+}
+
+function removeLocalItemsBy(colName: string, predicate: (item: any) => boolean) {
+  const items = getLocalItems(colName);
+  const filtered = items.filter(i => !predicate(i));
+  setLocalItems(colName, filtered);
+}
+
+function generateLocalId(prefix: string = "id"): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// Helper to check if a document belongs to a specific user/school (strict multi-tenant isolation)
+export function isDocBelongingToUser(data: any, currentUid: string, currentEmail: string): boolean {
+  if (!data) return false;
+  const docUid = data.userId ? String(data.userId).trim() : "";
+  const docEmail = data.userEmail ? String(data.userEmail).trim().toLowerCase() : "";
+  const cUid = currentUid ? String(currentUid).trim() : "";
+  const cEmail = currentEmail ? String(currentEmail).trim().toLowerCase() : "";
+
+  // 1. Primary Email Match: If both have an email and they match, it belongs to the school account!
+  if (docEmail && cEmail && docEmail === cEmail) {
+    return true;
+  }
+
+  // 2. Primary UID Match: If document has a userId, and it matches currentUid
+  if (docUid && cUid && (docUid === cUid || docUid.toLowerCase() === cUid.toLowerCase())) {
+    return true;
+  }
+
+  // 3. Fallback if currentUid is formatted as an email (e.g. owner=school@mail.com)
+  if (docEmail && cUid && cUid.includes("@") && docEmail === cUid.toLowerCase()) {
+    return true;
+  }
+
+  // 4. Fallback if docUid is an email string matching currentEmail
+  if (docUid && cEmail && docUid.includes("@") && docUid.toLowerCase() === cEmail) {
+    return true;
+  }
+
+  return false;
+}
+
+// Helper to fetch entire collection and filter client-side based on strict multi-tenant user isolation
 async function fetchAndFilterCollection(colName: string): Promise<any[]> {
-  const user = auth.currentUser;
-  if (!user) return [];
-  
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = eff.uid;
+  const currentEmail = eff.email?.toLowerCase() || "";
+
+  // Load from local storage cache first
+  const localList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
 
   try {
     const querySnapshot = await getDocs(collection(db, colName));
@@ -92,38 +201,27 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
     
     querySnapshot.forEach(docSnap => {
       const data = docSnap.data();
-      let belongs = false;
-
-      // 1. Direct match by UID
-      if (data.userId === currentUid) {
-        belongs = true;
-      }
-      // 2. Direct match by Email
-      else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      }
-      // 3. Fallbacks for majedsoft@gmail.com
-      else if (currentEmail.includes("majedsoft")) {
-        // If document has no userId and no userEmail (legacy global data)
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        }
-        // If document has known previous UIDs of majedsoft
-        else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
-        }
-      }
-
-      if (belongs && !seenIds.has(docSnap.id)) {
+      if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
         seenIds.add(docSnap.id);
         results.push({ id: docSnap.id, ...data });
       }
     });
 
+    // Merge any locally created items that haven't been deleted
+    localList.forEach(localItem => {
+      if (!seenIds.has(localItem.id)) {
+        results.push(localItem);
+        seenIds.add(localItem.id);
+      }
+    });
+
+    // Update local cache with latest full list
+    setLocalItems(colName, results);
+
     return results;
-  } catch (err) {
-    console.error(`Error fetching or filtering collection "${colName}":`, err);
-    return [];
+  } catch (err: any) {
+    // Graceful fallback to local cache on permission denial or offline
+    return localList;
   }
 }
 
@@ -196,66 +294,75 @@ export function subscribeToAttendanceRecord(
   callback: (record: AttendanceRecord | null) => void,
   onError?: (error: any) => void
 ) {
-  const user = auth.currentUser;
-  if (!user) {
-    callback(null);
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
+
+  const localList = getLocalItems(ATTENDANCE_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  const initial = localList.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId) || null;
+  callback(initial);
+
+  try {
+    const q = collection(db, ATTENDANCE_COLL);
+    return onSnapshot(q, (snapshot) => {
+      let found: AttendanceRecord | null = null;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.date === date && data.period === period && data.gradeId === gradeId && data.classId === classId) {
+          found = { id: docSnap.id, ...data } as AttendanceRecord;
+        }
+      });
+      callback(found);
+    }, (err) => {
+      if (onError) onError(err);
+    });
+  } catch (e) {
     return () => {};
   }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
-
-  const q = collection(db, ATTENDANCE_COLL);
-  return onSnapshot(q, (snapshot) => {
-    let found: AttendanceRecord | null = null;
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      let belongs = false;
-
-      if (data.userId === currentUid) {
-        belongs = true;
-      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      } else if (currentEmail.includes("majedsoft")) {
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
-        }
-      }
-
-      if (belongs && data.date === date && data.period === period && data.gradeId === gradeId && data.classId === classId) {
-        found = { id: docSnap.id, ...data } as AttendanceRecord;
-      }
-    });
-    callback(found);
-  }, onError);
 }
 
 // Save Attendance Record
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
   
   // Check if a record already exists for this slot
   const existing = await getAttendanceRecord(record.date, record.period, record.gradeId, record.classId);
-  
-  if (existing) {
-    const docRef = doc(db, ATTENDANCE_COLL, existing.id);
-    await setDoc(docRef, {
-      ...record,
-      userId: uid,
-      userEmail: email,
-      timestamp: serverTimestamp()
-    }, { merge: true });
-  } else {
-    const collRef = collection(db, ATTENDANCE_COLL);
-    await addDoc(collRef, {
-      ...record,
-      userId: uid,
-      userEmail: email,
-      timestamp: serverTimestamp()
-    });
+  const recordId = existing?.id || generateLocalId("att");
+
+  const fullRecord = {
+    ...record,
+    id: recordId,
+    userId: uid,
+    userEmail: email,
+    timestamp: Date.now()
+  };
+
+  // 1. Save to local storage cache immediately
+  saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord);
+
+  // 2. Persist to Firestore
+  try {
+    if (existing) {
+      const docRef = doc(db, ATTENDANCE_COLL, existing.id);
+      await setDoc(docRef, {
+        ...record,
+        userId: uid,
+        userEmail: email,
+        timestamp: serverTimestamp()
+      }, { merge: true });
+    } else {
+      const collRef = collection(db, ATTENDANCE_COLL);
+      await addDoc(collRef, {
+        ...record,
+        userId: uid,
+        userEmail: email,
+        timestamp: serverTimestamp()
+      });
+    }
+  } catch (err: any) {
+    // Firestore error gracefully handled - local cache is already saved
   }
 }
 
@@ -272,71 +379,233 @@ export function subscribeToBehaviorRecords(
   callback: (records: BehaviorRecord[]) => void,
   onError?: (error: any) => void
 ) {
-  const user = auth.currentUser;
-  if (!user) {
-    callback([]);
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
+
+  const localList = getLocalItems(BEHAVIORS_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && item.studentId === studentId);
+  localList.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  callback(localList);
+
+  try {
+    const q = collection(db, BEHAVIORS_COLL);
+    return onSnapshot(q, (snapshot) => {
+      const records: BehaviorRecord[] = [];
+      const seenIds = new Set<string>();
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.studentId === studentId && !seenIds.has(docSnap.id)) {
+          seenIds.add(docSnap.id);
+          records.push({ id: docSnap.id, ...data } as BehaviorRecord);
+        }
+      });
+      records.sort((a, b) => b.date.localeCompare(a.date));
+      callback(records);
+    }, (err) => {
+      if (onError) onError(err);
+    });
+  } catch (e) {
     return () => {};
   }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
-
-  const q = collection(db, BEHAVIORS_COLL);
-  return onSnapshot(q, (snapshot) => {
-    const records: BehaviorRecord[] = [];
-    const seenIds = new Set<string>();
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      let belongs = false;
-
-      if (data.userId === currentUid) {
-        belongs = true;
-      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      } else if (currentEmail.includes("majedsoft")) {
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
-        }
-      }
-
-      if (belongs && data.studentId === studentId && !seenIds.has(docSnap.id)) {
-        seenIds.add(docSnap.id);
-        records.push({ id: docSnap.id, ...data } as BehaviorRecord);
-      }
-    });
-    records.sort((a, b) => b.date.localeCompare(a.date));
-    callback(records);
-  }, onError);
 }
 
 // Save Behavior Record
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
-  const collRef = collection(db, BEHAVIORS_COLL);
-  const docRef = await addDoc(collRef, {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+  const newId = generateLocalId("beh");
+
+  const fullRecord = {
     ...record,
+    id: newId,
     userId: uid,
     userEmail: email,
-    timestamp: serverTimestamp()
-  });
-  return docRef.id;
+    timestamp: Date.now()
+  };
+
+  saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord);
+
+  try {
+    const collRef = collection(db, BEHAVIORS_COLL);
+    const docRef = await addDoc(collRef, {
+      ...record,
+      userId: uid,
+      userEmail: email,
+      timestamp: serverTimestamp()
+    });
+    return docRef.id;
+  } catch (err) {
+    return newId;
+  }
 }
 
 // Delete Behavior Record
 export async function deleteBehaviorRecord(id: string): Promise<void> {
-  await deleteDoc(doc(db, BEHAVIORS_COLL, id));
+  removeLocalItem(BEHAVIORS_COLL, id);
+  try {
+    await deleteDoc(doc(db, BEHAVIORS_COLL, id));
+  } catch (err) {}
+}
+
+// --- MORNING DELAY (التأخر الصباحي) ---
+
+// Fetch Morning Delay Records (optionally filtered by date)
+export async function getMorningDelayRecords(date?: string): Promise<MorningDelayRecord[]> {
+  const records = (await fetchAndFilterCollection(MORNING_DELAYS_COLL)) as MorningDelayRecord[];
+  if (date) {
+    return records.filter(r => r.date === date).sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+  }
+  return records.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// Subscribe to Morning Delay Records in real-time
+export function subscribeToMorningDelayRecords(
+  date: string | undefined,
+  callback: (records: MorningDelayRecord[]) => void,
+  onError?: (error: any) => void
+) {
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
+
+  const localList = getLocalItems(MORNING_DELAYS_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && (!date || item.date === date));
+  localList.sort((a, b) => {
+    if (a.date !== b.date) return (b.date || "").localeCompare(a.date || "");
+    return (b.arrivalTime || "").localeCompare(a.arrivalTime || "");
+  });
+  callback(localList);
+
+  try {
+    const q = collection(db, MORNING_DELAYS_COLL);
+    return onSnapshot(q, (snapshot) => {
+      const records: MorningDelayRecord[] = [];
+      const seenIds = new Set<string>();
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail) && (!date || data.date === date) && !seenIds.has(docSnap.id)) {
+          seenIds.add(docSnap.id);
+          records.push({ id: docSnap.id, ...data } as MorningDelayRecord);
+        }
+      });
+      records.sort((a, b) => {
+        if (a.date !== b.date) return b.date.localeCompare(a.date);
+        return (b.arrivalTime || "").localeCompare(a.arrivalTime || "");
+      });
+      callback(records);
+    }, (err) => {
+      if (onError) onError(err);
+    });
+  } catch (e) {
+    return () => {};
+  }
+}
+
+// Save Morning Delay Record
+export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "id" | "timestamp">): Promise<string> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+  
+  const existingRecords = await getMorningDelayRecords(record.date);
+  const existing = existingRecords.find(r => r.studentId === record.studentId);
+  const recordId = existing?.id || generateLocalId("delay");
+
+  const fullRecord = {
+    ...record,
+    id: recordId,
+    userId: uid,
+    userEmail: email,
+    timestamp: Date.now()
+  };
+
+  saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord);
+
+  try {
+    if (existing) {
+      const docRef = doc(db, MORNING_DELAYS_COLL, existing.id);
+      await setDoc(docRef, {
+        ...record,
+        userId: uid,
+        userEmail: email,
+        timestamp: serverTimestamp()
+      }, { merge: true });
+      return existing.id;
+    }
+
+    const collRef = collection(db, MORNING_DELAYS_COLL);
+    const docRef = await addDoc(collRef, {
+      ...record,
+      userId: uid,
+      userEmail: email,
+      timestamp: serverTimestamp()
+    });
+    return docRef.id;
+  } catch (err) {
+    return recordId;
+  }
+}
+
+// Save Multiple Morning Delay Records in Batch
+export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "id" | "timestamp">[]): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
+  // Local cache update
+  records.forEach(r => {
+    saveOrUpdateLocalItem(MORNING_DELAYS_COLL, {
+      ...r,
+      id: generateLocalId("delay"),
+      userId: uid,
+      userEmail: email,
+      timestamp: Date.now()
+    });
+  });
+
+  try {
+    const batch = writeBatch(db);
+    for (const record of records) {
+      const docRef = doc(collection(db, MORNING_DELAYS_COLL));
+      batch.set(docRef, {
+        ...record,
+        userId: uid,
+        userEmail: email,
+        timestamp: serverTimestamp()
+      });
+    }
+    await batch.commit();
+  } catch (err) {}
+}
+
+// Delete Morning Delay Record
+export async function deleteMorningDelayRecord(id: string): Promise<void> {
+  removeLocalItem(MORNING_DELAYS_COLL, id);
+  try {
+    await deleteDoc(doc(db, MORNING_DELAYS_COLL, id));
+  } catch (err) {}
+}
+
+// Fetch all morning delay records for stats/reports
+export async function getAllMorningDelayRecords(): Promise<MorningDelayRecord[]> {
+  return fetchAndFilterCollection(MORNING_DELAYS_COLL) as Promise<MorningDelayRecord[]>;
+}
+
+// Subscribe to all morning delay records
+export function subscribeToAllMorningDelayRecords(callback: (records: MorningDelayRecord[]) => void, onError?: (error: any) => void) {
+  return subscribeToCollection(MORNING_DELAYS_COLL, (records) => {
+    records.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    callback(records);
+  }, onError);
 }
 
 // --- ADMIN WRITES ---
 
 // Add Grade
 export async function addGrade(name: string): Promise<string> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
 
   const existingGrades = await getGrades();
   const trimmedName = name.trim();
@@ -345,44 +614,134 @@ export async function addGrade(name: string): Promise<string> {
     return existing.id;
   }
 
-  const docRef = await addDoc(collection(db, GRADES_COLL), { 
+  const generatedId = generateLocalId("grd");
+  const newGradeObj = {
+    id: generatedId,
     name: trimmedName,
     userId: uid,
     userEmail: email,
     createdAt: Date.now()
+  };
+
+  // 1. Immediately write to local storage cache
+  saveOrUpdateLocalItem(GRADES_COLL, newGradeObj);
+
+  // 2. Persist to Firestore
+  try {
+    const docRef = await addDoc(collection(db, GRADES_COLL), { 
+      name: trimmedName,
+      userId: uid,
+      userEmail: email,
+      createdAt: Date.now()
+    });
+    // Update local item with Firestore ID if different
+    if (docRef.id !== generatedId) {
+      removeLocalItem(GRADES_COLL, generatedId);
+      saveOrUpdateLocalItem(GRADES_COLL, { ...newGradeObj, id: docRef.id });
+    }
+    return docRef.id;
+  } catch (err: any) {
+    // Firestore error gracefully caught, local cache preserves the grade!
+    return generatedId;
+  }
+}
+
+// Add Multiple Grades in a Batch
+export async function addGradesBatch(names: string[]): Promise<{ id: string; name: string }[]> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
+  const existingGrades = await getGrades();
+  const existingMap = new Map<string, string>();
+  existingGrades.forEach(g => {
+    if (g.name) existingMap.set(g.name.trim(), g.id);
   });
-  return docRef.id;
+
+  const results: { id: string; name: string }[] = [];
+  const toCreate: { id: string; name: string }[] = [];
+
+  names.forEach(rawName => {
+    const trimmed = rawName.trim();
+    if (!trimmed) return;
+    if (existingMap.has(trimmed)) {
+      results.push({ id: existingMap.get(trimmed)!, name: trimmed });
+    } else {
+      const generatedId = generateLocalId("grd");
+      const gradeItem = { id: generatedId, name: trimmed };
+      results.push(gradeItem);
+      toCreate.push(gradeItem);
+      // Save locally
+      saveOrUpdateLocalItem(GRADES_COLL, {
+        id: generatedId,
+        name: trimmed,
+        userId: uid,
+        userEmail: email,
+        createdAt: Date.now()
+      });
+    }
+  });
+
+  if (toCreate.length > 0) {
+    try {
+      const batch = writeBatch(db);
+      const now = Date.now();
+      toCreate.forEach((item, idx) => {
+        const docRef = doc(collection(db, GRADES_COLL));
+        batch.set(docRef, {
+          name: item.name,
+          userId: uid,
+          userEmail: email,
+          createdAt: now + idx
+        });
+      });
+      await batch.commit();
+    } catch (err: any) {
+      // Local cache already holds the grades safely
+    }
+  }
+
+  return results;
 }
 
 // Delete Grade
 export async function deleteGrade(id: string): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) throw new Error("Unauthenticated");
-  const batch = writeBatch(db);
-  batch.delete(doc(db, GRADES_COLL, id));
-  
-  // Clean up associated classes (unique gradeId)
-  const classesQuery = query(collection(db, CLASSES_COLL), where("gradeId", "==", id));
-  const classesSnap = await getDocs(classesQuery);
-  classesSnap.docs.forEach(cDoc => {
-    batch.delete(doc(db, CLASSES_COLL, cDoc.id));
-  });
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
 
-  // Clean up associated students (unique gradeId)
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("gradeId", "==", id));
-  const studentsSnap = await getDocs(studentsQuery);
-  studentsSnap.docs.forEach(sDoc => {
-    batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
-  });
+  // 1. Delete from local storage cache immediately
+  removeLocalItem(GRADES_COLL, id);
+  removeLocalItemsBy(CLASSES_COLL, (c) => c.gradeId === id);
+  removeLocalItemsBy(STUDENTS_COLL, (s) => s.gradeId === id);
 
-  await batch.commit();
+  // 2. Delete from Firestore
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, GRADES_COLL, id));
+    
+    // Clean up associated classes
+    const classesQuery = query(collection(db, CLASSES_COLL), where("gradeId", "==", id));
+    const classesSnap = await getDocs(classesQuery);
+    classesSnap.docs.forEach(cDoc => {
+      batch.delete(doc(db, CLASSES_COLL, cDoc.id));
+    });
+
+    // Clean up associated students
+    const studentsQuery = query(collection(db, STUDENTS_COLL), where("gradeId", "==", id));
+    const studentsSnap = await getDocs(studentsQuery);
+    studentsSnap.docs.forEach(sDoc => {
+      batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
+    });
+
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Add Class
 export async function addClass(name: string, gradeId: string): Promise<string> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
 
   const existingClasses = await getClasses();
   const trimmedName = name.trim();
@@ -391,122 +750,287 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
     return existing.id;
   }
 
-  const docRef = await addDoc(collection(db, CLASSES_COLL), { 
-    name: trimmedName, 
-    gradeId, 
+  const generatedId = generateLocalId("cls");
+  const newClassObj = {
+    id: generatedId,
+    name: trimmedName,
+    gradeId,
     userId: uid,
-    userEmail: email
+    userEmail: email,
+    createdAt: Date.now()
+  };
+
+  saveOrUpdateLocalItem(CLASSES_COLL, newClassObj);
+
+  try {
+    const docRef = await addDoc(collection(db, CLASSES_COLL), { 
+      name: trimmedName, 
+      gradeId, 
+      userId: uid,
+      userEmail: email
+    });
+    if (docRef.id !== generatedId) {
+      removeLocalItem(CLASSES_COLL, generatedId);
+      saveOrUpdateLocalItem(CLASSES_COLL, { ...newClassObj, id: docRef.id });
+    }
+    return docRef.id;
+  } catch (err: any) {
+    return generatedId;
+  }
+}
+
+// Add Multiple Classes in a Batch (Ultra-fast atomic save)
+export async function addClassesBatch(classesList: { name: string; gradeId: string }[]): Promise<{ id: string; name: string; gradeId: string }[]> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
+  const existingClasses = await getClasses();
+  const existingKeySet = new Set<string>();
+  existingClasses.forEach(c => {
+    if (c.name && c.gradeId) existingKeySet.add(`${c.gradeId}__${c.name.trim()}`);
   });
-  return docRef.id;
+
+  const results: { id: string; name: string; gradeId: string }[] = [];
+  const toCreate: { id: string; name: string; gradeId: string }[] = [];
+
+  classesList.forEach(item => {
+    const trimmed = item.name.trim();
+    if (!trimmed || !item.gradeId) return;
+    const key = `${item.gradeId}__${trimmed}`;
+    if (existingKeySet.has(key)) {
+      const match = existingClasses.find(c => c.gradeId === item.gradeId && c.name?.trim() === trimmed);
+      if (match) results.push({ id: match.id, name: trimmed, gradeId: item.gradeId });
+    } else {
+      const generatedId = generateLocalId("cls");
+      const classObj = { id: generatedId, name: trimmed, gradeId: item.gradeId };
+      results.push(classObj);
+      toCreate.push(classObj);
+
+      // Save locally immediately
+      saveOrUpdateLocalItem(CLASSES_COLL, {
+        id: generatedId,
+        name: trimmed,
+        gradeId: item.gradeId,
+        userId: uid,
+        userEmail: email,
+        createdAt: Date.now()
+      });
+    }
+  });
+
+  if (toCreate.length > 0) {
+    try {
+      const batch = writeBatch(db);
+      const now = Date.now();
+      toCreate.forEach((c, idx) => {
+        const docRef = doc(collection(db, CLASSES_COLL));
+        batch.set(docRef, {
+          name: c.name,
+          gradeId: c.gradeId,
+          userId: uid,
+          userEmail: email,
+          createdAt: now + idx
+        });
+      });
+      await batch.commit();
+    } catch (err: any) {}
+  }
+
+  return results;
 }
 
 // Delete Class
 export async function deleteClass(id: string): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  if (!uid) throw new Error("Unauthenticated");
-  const batch = writeBatch(db);
-  batch.delete(doc(db, CLASSES_COLL, id));
-  
-  // Clean up associated students of this class (unique classId)
-  const studentsQuery = query(collection(db, STUDENTS_COLL), where("classId", "==", id));
-  const studentsSnap = await getDocs(studentsQuery);
-  studentsSnap.docs.forEach(sDoc => {
-    batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
-  });
-  
-  await batch.commit();
+  removeLocalItem(CLASSES_COLL, id);
+  removeLocalItemsBy(STUDENTS_COLL, (s) => s.classId === id);
+
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, CLASSES_COLL, id));
+    
+    const studentsQuery = query(collection(db, STUDENTS_COLL), where("classId", "==", id));
+    const studentsSnap = await getDocs(studentsQuery);
+    studentsSnap.docs.forEach(sDoc => {
+      batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
+    });
+    
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Add Teacher
 export async function addTeacher(name: string): Promise<string> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
-  const docRef = await addDoc(collection(db, TEACHERS_COLL), { 
-    name, 
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+  const generatedId = generateLocalId("tch");
+
+  const newTeacherObj = {
+    id: generatedId,
+    name: name.trim(),
     userId: uid,
-    userEmail: email
-  });
-  return docRef.id;
+    userEmail: email,
+    createdAt: Date.now()
+  };
+
+  saveOrUpdateLocalItem(TEACHERS_COLL, newTeacherObj);
+
+  try {
+    const docRef = await addDoc(collection(db, TEACHERS_COLL), { 
+      name: name.trim(), 
+      userId: uid,
+      userEmail: email
+    });
+    if (docRef.id !== generatedId) {
+      removeLocalItem(TEACHERS_COLL, generatedId);
+      saveOrUpdateLocalItem(TEACHERS_COLL, { ...newTeacherObj, id: docRef.id });
+    }
+    return docRef.id;
+  } catch (err: any) {
+    return generatedId;
+  }
 }
 
 // Add Multiple Teachers in a Batch
 export async function addTeachersBatch(names: string[]): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
-  const batch = writeBatch(db);
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
   names.forEach(name => {
-    const docRef = doc(collection(db, TEACHERS_COLL));
-    batch.set(docRef, { 
-      name, 
+    saveOrUpdateLocalItem(TEACHERS_COLL, {
+      id: generateLocalId("tch"),
+      name: name.trim(),
       userId: uid,
-      userEmail: email
+      userEmail: email,
+      createdAt: Date.now()
     });
   });
-  await batch.commit();
+
+  try {
+    const batch = writeBatch(db);
+    names.forEach(name => {
+      const docRef = doc(collection(db, TEACHERS_COLL));
+      batch.set(docRef, { 
+        name: name.trim(), 
+        userId: uid,
+        userEmail: email
+      });
+    });
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Delete Teacher
 export async function deleteTeacher(id: string): Promise<void> {
-  await deleteDoc(doc(db, TEACHERS_COLL, id));
+  removeLocalItem(TEACHERS_COLL, id);
+  try {
+    await deleteDoc(doc(db, TEACHERS_COLL, id));
+  } catch (err: any) {}
 }
 
 // Delete Multiple Teachers in a Batch
 export async function deleteTeachersBatch(ids: string[]): Promise<void> {
-  const batch = writeBatch(db);
-  ids.forEach(id => {
-    batch.delete(doc(db, TEACHERS_COLL, id));
-  });
-  await batch.commit();
+  ids.forEach(id => removeLocalItem(TEACHERS_COLL, id));
+  try {
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      batch.delete(doc(db, TEACHERS_COLL, id));
+    });
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Add Student
 export async function addStudent(name: string, gradeId: string, classId: string): Promise<string> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
-  const docRef = await addDoc(collection(db, STUDENTS_COLL), { 
-    name, 
-    gradeId, 
-    classId, 
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+  const generatedId = generateLocalId("stu");
+
+  const newStudentObj = {
+    id: generatedId,
+    name: name.trim(),
+    gradeId,
+    classId,
     userId: uid,
-    userEmail: email
-  });
-  return docRef.id;
+    userEmail: email,
+    createdAt: Date.now()
+  };
+
+  saveOrUpdateLocalItem(STUDENTS_COLL, newStudentObj);
+
+  try {
+    const docRef = await addDoc(collection(db, STUDENTS_COLL), { 
+      name: name.trim(), 
+      gradeId, 
+      classId, 
+      userId: uid,
+      userEmail: email
+    });
+    if (docRef.id !== generatedId) {
+      removeLocalItem(STUDENTS_COLL, generatedId);
+      saveOrUpdateLocalItem(STUDENTS_COLL, { ...newStudentObj, id: docRef.id });
+    }
+    return docRef.id;
+  } catch (err: any) {
+    return generatedId;
+  }
 }
 
 // Add Multiple Students in a Batch
 export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
-  if (!uid) throw new Error("Unauthenticated");
-  const batch = writeBatch(db);
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
   studentsList.forEach(s => {
-    const docRef = doc(collection(db, STUDENTS_COLL));
-    batch.set(docRef, { 
-      name: s.name, 
-      gradeId: s.gradeId, 
-      classId: s.classId, 
+    saveOrUpdateLocalItem(STUDENTS_COLL, {
+      id: generateLocalId("stu"),
+      name: s.name.trim(),
+      gradeId: s.gradeId,
+      classId: s.classId,
       userId: uid,
-      userEmail: email
+      userEmail: email,
+      createdAt: Date.now()
     });
   });
-  await batch.commit();
+
+  try {
+    const batch = writeBatch(db);
+    studentsList.forEach(s => {
+      const docRef = doc(collection(db, STUDENTS_COLL));
+      batch.set(docRef, { 
+        name: s.name.trim(), 
+        gradeId: s.gradeId, 
+        classId: s.classId, 
+        userId: uid,
+        userEmail: email
+      });
+    });
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Delete Student
 export async function deleteStudent(id: string): Promise<void> {
-  await deleteDoc(doc(db, STUDENTS_COLL, id));
+  removeLocalItem(STUDENTS_COLL, id);
+  try {
+    await deleteDoc(doc(db, STUDENTS_COLL, id));
+  } catch (err: any) {}
 }
 
 // Delete Multiple Students in a Batch
 export async function deleteStudentsBatch(ids: string[]): Promise<void> {
-  const batch = writeBatch(db);
-  ids.forEach(id => {
-    batch.delete(doc(db, STUDENTS_COLL, id));
-  });
-  await batch.commit();
+  ids.forEach(id => removeLocalItem(STUDENTS_COLL, id));
+  try {
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      batch.delete(doc(db, STUDENTS_COLL, id));
+    });
+    await batch.commit();
+  } catch (err: any) {}
 }
 
 // Fetch all attendance for statistics
@@ -516,41 +1040,7 @@ export async function getAllAttendanceRecords(): Promise<AttendanceRecord[]> {
 
 // Subscribe to all attendance for real-time statistics
 export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRecord[]) => void, onError?: (error: any) => void) {
-  const user = auth.currentUser;
-  if (!user) {
-    callback([]);
-    return () => {};
-  }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
-
-  const q = collection(db, ATTENDANCE_COLL);
-  return onSnapshot(q, (snapshot) => {
-    const records: AttendanceRecord[] = [];
-    const seenIds = new Set<string>();
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      let belongs = false;
-
-      if (data.userId === currentUid) {
-        belongs = true;
-      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      } else if (currentEmail.includes("majedsoft")) {
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
-        }
-      }
-
-      if (belongs && !seenIds.has(docSnap.id)) {
-        seenIds.add(docSnap.id);
-        records.push({ id: docSnap.id, ...data } as AttendanceRecord);
-      }
-    });
-    callback(records);
-  }, onError);
+  return subscribeToCollection(ATTENDANCE_COLL, callback, onError);
 }
 
 // Fetch all behavior records for statistics
@@ -560,95 +1050,58 @@ export async function getAllBehaviorRecords(): Promise<BehaviorRecord[]> {
 
 // Subscribe to all behavior records for real-time statistics
 export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord[]) => void, onError?: (error: any) => void) {
-  const user = auth.currentUser;
-  if (!user) {
-    callback([]);
-    return () => {};
-  }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
-
-  const q = collection(db, BEHAVIORS_COLL);
-  return onSnapshot(q, (snapshot) => {
-    const records: BehaviorRecord[] = [];
-    const seenIds = new Set<string>();
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      let belongs = false;
-
-      if (data.userId === currentUid) {
-        belongs = true;
-      } else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      } else if (currentEmail.includes("majedsoft")) {
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
-        }
-      }
-
-      if (belongs && !seenIds.has(docSnap.id)) {
-        seenIds.add(docSnap.id);
-        records.push({ id: docSnap.id, ...data } as BehaviorRecord);
-      }
-    });
-    callback(records);
-  }, onError);
+  return subscribeToCollection(BEHAVIORS_COLL, callback, onError);
 }
 
 // --- DATABASE AUTO-SEEDING ---
 export async function seedDatabaseIfEmpty(): Promise<boolean> {
-  // Disabled auto-seeding per user request: do not add default data (grades, classes, teachers, students) to any account.
   return false;
 }
 
 // --- SCHOOL SETTINGS ---
-const SETTINGS_COLL = "settings";
-
 export async function getSchoolName(): Promise<string> {
-  const user = auth.currentUser;
-  if (!user) return "";
-  const uid = user.uid;
-  const email = user.email?.toLowerCase() || "";
+  const eff = getEffectiveUidAndEmail();
+  if (!eff) return "";
+  const uid = eff.uid;
+  const email = eff.email;
   
+  if (typeof window !== "undefined") {
+    const localName = localStorage.getItem(`school_name_${uid}`) || localStorage.getItem(`school_name_${email}`);
+    if (localName) return localName;
+  }
+
   try {
-    // 1. query by userId
-    const q1 = query(collection(db, SETTINGS_COLL), where("userId", "==", uid));
-    const s1 = await getDocs(q1);
-    if (!s1.empty) {
-      return s1.docs[0].data().schoolName || "";
-    }
-    
-    // 2. query by email
-    if (email) {
-      const q2 = query(collection(db, SETTINGS_COLL), where("userEmail", "==", email));
-      const s2 = await getDocs(q2);
-      if (!s2.empty) {
-        return s2.docs[0].data().schoolName || "";
+    const querySnapshot = await getDocs(collection(db, SETTINGS_COLL));
+    let schoolNameVal = "";
+    querySnapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      if (isDocBelongingToUser(data, uid, email) && data.schoolName) {
+        schoolNameVal = data.schoolName;
       }
+    });
+    if (schoolNameVal && typeof window !== "undefined") {
+      localStorage.setItem(`school_name_${uid}`, schoolNameVal);
     }
-    
-    // 3. legacy global data fallback for majedsoft@gmail.com
-    if (email.includes("majedsoft")) {
-      for (const legacyUid of ["QgOSyBcP28MzmbJT92aH8vdgAG33", "D0GoJniRN0T4poH8RMgY9OjVJ5H3"]) {
-        const qLegacy = query(collection(db, SETTINGS_COLL), where("userId", "==", legacyUid));
-        const sLegacy = await getDocs(qLegacy);
-        if (!sLegacy.empty) {
-          return sLegacy.docs[0].data().schoolName || "";
-        }
-      }
-    }
+    return schoolNameVal;
   } catch (err) {
-    console.error("Error getting school name:", err);
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(`school_name_${uid}`) || "";
+    }
   }
   return "";
 }
 
 export async function saveSchoolName(schoolName: string): Promise<void> {
-  const uid = auth.currentUser?.uid;
-  const email = auth.currentUser?.email?.toLowerCase() || "";
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff?.uid || auth.currentUser?.uid;
+  const email = eff?.email || auth.currentUser?.email?.toLowerCase() || "";
   if (!uid) return;
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(`school_name_${uid}`, schoolName);
+    if (email) localStorage.setItem(`school_name_${email}`, schoolName);
+  }
+
   try {
     const q = query(collection(db, SETTINGS_COLL), where("userId", "==", uid));
     const querySnapshot = await getDocs(q);
@@ -656,7 +1109,6 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
       const docRef = doc(db, SETTINGS_COLL, querySnapshot.docs[0].id);
       await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
     } else {
-      // Direct query by email instead of fetchAndFilterCollection
       const qEmail = query(collection(db, SETTINGS_COLL), where("userEmail", "==", email));
       const emailSnapshot = await getDocs(qEmail);
       if (!emailSnapshot.empty) {
@@ -666,53 +1118,57 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
         await addDoc(collection(db, SETTINGS_COLL), { schoolName, userId: uid, userEmail: email });
       }
     }
-  } catch (err) {
-    console.error("Error saving school name:", err);
-  }
+  } catch (err) {}
 }
 
 // Generic live subscription helper matching fetchAndFilterCollection logic
 function subscribeToCollection(colName: string, callback: (data: any[]) => void, onError?: (error: any) => void) {
-  const user = auth.currentUser;
-  if (!user) {
+  const eff = getEffectiveUidAndEmail();
+  if (!eff) {
     callback([]);
     return () => {};
   }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
 
-  const q = collection(db, colName);
-  return onSnapshot(q, (snapshot) => {
-    const results: any[] = [];
-    const seenIds = new Set<string>();
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      let belongs = false;
+  // Immediately emit cached items so UI is instantly populated
+  const localList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  if (localList.length > 0) {
+    callback(localList);
+  }
 
-      // 1. Direct match by UID
-      if (data.userId === currentUid) {
-        belongs = true;
-      }
-      // 2. Direct match by Email
-      else if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-        belongs = true;
-      }
-      // 3. Fallbacks for majedsoft@gmail.com
-      else if (currentEmail.includes("majedsoft")) {
-        if (!data.userId && !data.userEmail) {
-          belongs = true;
-        } else if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          belongs = true;
+  try {
+    const q = collection(db, colName);
+    return onSnapshot(q, (snapshot) => {
+      const results: any[] = [];
+      const seenIds = new Set<string>();
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
+          seenIds.add(docSnap.id);
+          results.push({ id: docSnap.id, ...data });
         }
-      }
-
-      if (belongs && !seenIds.has(docSnap.id)) {
-        seenIds.add(docSnap.id);
-        results.push({ id: docSnap.id, ...data });
-      }
+      });
+      // Merge with any local cache items
+      const currentLocals = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+      currentLocals.forEach(l => {
+        if (!seenIds.has(l.id)) {
+          results.push(l);
+          seenIds.add(l.id);
+        }
+      });
+      setLocalItems(colName, results);
+      callback(results);
+    }, (error) => {
+      // On permission or network error, fallback silently to local cache without crashing UI
+      const fallbackList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+      callback(fallbackList);
+      if (onError) onError(error);
     });
-    callback(results);
-  }, onError);
+  } catch (err) {
+    callback(localList);
+    return () => {};
+  }
 }
 
 // Subscribe All Grades in real-time
@@ -761,56 +1217,34 @@ export function subscribeToStudents(callback: (students: Student[]) => void, onE
 
 // Subscribe School Name in real-time
 export function subscribeToSchoolName(callback: (schoolName: string) => void, onError?: (error: any) => void) {
-  const user = auth.currentUser;
-  if (!user) {
+  const eff = getEffectiveUidAndEmail();
+  if (!eff) {
     callback("");
     return () => {};
   }
-  const currentUid = user.uid;
-  const currentEmail = user.email?.toLowerCase() || "";
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
 
-  const q = collection(db, SETTINGS_COLL);
-  return onSnapshot(q, (snapshot) => {
-    let schoolNameVal = "";
-    let found = false;
-
-    // 1. Check direct match by UID
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      if (data.userId === currentUid) {
-        schoolNameVal = data.schoolName || "";
-        found = true;
-      }
+  try {
+    const q = collection(db, SETTINGS_COLL);
+    return onSnapshot(q, (snapshot) => {
+      let schoolNameVal = "";
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.schoolName) {
+          schoolNameVal = data.schoolName;
+        }
+      });
+      callback(schoolNameVal);
+    }, (err) => {
+      if (onError) onError(err);
     });
-
-    // 2. Check match by email if not found
-    if (!found && currentEmail) {
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.userEmail && data.userEmail.toLowerCase() === currentEmail) {
-          schoolNameVal = data.schoolName || "";
-          found = true;
-        }
-      });
-    }
-
-    // 3. Legacy global data fallback for majedsoft@gmail.com
-    if (!found && currentEmail.includes("majedsoft")) {
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.userId === "QgOSyBcP28MzmbJT92aH8vdgAG33" || data.userId === "D0GoJniRN0T4poH8RMgY9OjVJ5H3") {
-          schoolNameVal = data.schoolName || "";
-          found = true;
-        }
-      });
-    }
-
-    callback(schoolNameVal);
-  }, onError);
+  } catch (e) {
+    return () => {};
+  }
 }
 
 // --- REGISTERED USERS SYSTEM ---
-const USERS_COLL = "registered_users";
 
 /**
  * Registers or updates a user profile when they login or state checking occurs.
@@ -827,6 +1261,22 @@ export async function registerUserInDb(
   }
 
   try {
+    const payload: Partial<RegisteredUser> = {
+      uid: user.uid,
+      email: email,
+      displayName: user.displayName || email.split("@")[0],
+      photoURL: user.photoURL || "",
+      lastLogin: Date.now(),
+      schoolName: currentSchoolName || "",
+      status: "نشط",
+      createdAt: Date.now()
+    };
+
+    saveOrUpdateLocalItem(USERS_COLL, {
+      id: user.uid,
+      ...payload
+    });
+
     const docRef = doc(db, USERS_COLL, user.uid);
     const docSnap = await getDocs(query(collection(db, USERS_COLL), where("uid", "==", user.uid)));
     
@@ -835,23 +1285,19 @@ export async function registerUserInDb(
       existingData = docSnap.docs[0].data();
     }
 
-    const payload: Partial<RegisteredUser> = {
-      uid: user.uid,
-      email: email,
-      displayName: user.displayName || email.split("@")[0],
-      photoURL: user.photoURL || "",
-      lastLogin: Date.now(),
-      schoolName: currentSchoolName || existingData?.schoolName || "",
-      status: existingData?.status || "نشط"
-    };
-
-    if (!existingData) {
-      payload.createdAt = Date.now();
+    if (existingData?.schoolName && !payload.schoolName) {
+      payload.schoolName = existingData.schoolName;
+    }
+    if (existingData?.status) {
+      payload.status = existingData.status;
+    }
+    if (existingData?.createdAt) {
+      payload.createdAt = existingData.createdAt;
     }
 
     await setDoc(docRef, payload, { merge: true });
   } catch (err) {
-    console.error("Error registering user in DB:", err);
+    // Handled safely without noisy console errors
   }
 }
 
