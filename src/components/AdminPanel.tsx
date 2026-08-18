@@ -164,6 +164,18 @@ const getClassBadgeStyles = (num: string) => {
   }
 };
 
+const normalizeStudentName = (name: string): string => {
+  if (!name) return "";
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/\s+/g, " ");
+};
+
 export default function AdminPanel({ 
   grades, 
   classes, 
@@ -1605,16 +1617,18 @@ export default function AdminPanel({
       return;
     }
 
+    const normNewName = normalizeStudentName(trimmedName);
+
     // Duplicate check in this class
     const isDuplicate = students.some(
-      s => s.name.trim().toLowerCase() === trimmedName.toLowerCase() && s.classId === newStudentClassId
+      s => normalizeStudentName(s.name) === normNewName && s.classId === newStudentClassId
     );
     if (isDuplicate) {
       const cls = classes.find(c => c.id === newStudentClassId);
       const className = cls ? cls.name : "الفصل المحدد";
       setAlertState({
-        title: "تنبيه: الطالب مكرر ⚠️",
-        message: `الطالب "${trimmedName}" مسجل بالفعل في ${className}.\n\nتم تجاهل الإضافة لوجود تكرار (عدد التكرار: 1). تم تجاهل هذا الاسم لتفادي التكرار.`,
+        title: "تنبيه: اسم الطالب مكرر ⚠️",
+        message: `تم إلغاء الإضافة: الطالب "${trimmedName}" مسجل بالفعل في ${className}.\n\nتم تجاهل هذا الاسم تلقائياً لمنع التكرار في قاعدة البيانات.`,
         type: "warning"
       });
       return;
@@ -1769,31 +1783,50 @@ export default function AdminPanel({
       const uniqueNamesInImport: string[] = [];
       const duplicatesInImport: string[] = [];
       const duplicatesWithDb: string[] = [];
+      const seenNormalizedInBatch = new Set<string>();
+
+      // Existing students in this class
+      const existingClassStudents = students.filter(s => s.classId === newStudentClassId);
+      const existingClassNamesSet = new Set(
+        existingClassStudents.map(s => normalizeStudentName(s.name))
+      );
       
       parsedStudentNames.forEach(name => {
         const trimmed = name.trim();
         if (!trimmed) return;
         
-        // Check if duplicate in the same import file/pasted list
-        const isDupImport = uniqueNamesInImport.some(un => un.toLowerCase() === trimmed.toLowerCase());
-        // Check if duplicate with already registered students in this class
-        const isDupDb = students.some(s => s.name.trim().toLowerCase() === trimmed.toLowerCase() && s.classId === newStudentClassId);
-        
-        if (isDupDb) {
-          duplicatesWithDb.push(trimmed);
-        } else if (isDupImport) {
-          duplicatesInImport.push(trimmed);
-        } else {
-          uniqueNamesInImport.push(trimmed);
+        const norm = normalizeStudentName(trimmed);
+
+        // 1. Check if already exists in this class in database
+        if (existingClassNamesSet.has(norm)) {
+          if (!duplicatesWithDb.includes(trimmed)) {
+            duplicatesWithDb.push(trimmed);
+          }
+          return;
         }
+
+        // 2. Check if repeated multiple times inside the same pasted text / file
+        if (seenNormalizedInBatch.has(norm)) {
+          if (!duplicatesInImport.includes(trimmed)) {
+            duplicatesInImport.push(trimmed);
+          }
+          return;
+        }
+
+        // Valid non-duplicate!
+        seenNormalizedInBatch.add(norm);
+        uniqueNamesInImport.push(trimmed);
       });
       
       const totalSkipped = duplicatesWithDb.length + duplicatesInImport.length;
       
+      // CASE 1: All entered names are duplicates
       if (uniqueNamesInImport.length === 0) {
+        const cls = classes.find(c => c.id === newStudentClassId);
+        const className = cls ? cls.name : "الفصل المحدد";
         setAlertState({
-          title: "تنبيه: كافة الطلاب مكررين ⚠️",
-          message: `جميع الأسماء المدخلة (${totalSkipped} طالب) مكررة ومسجلة بالفعل في هذا الفصل أو مكررة في القائمة المدخلة. تم تجاهل الإضافة لتفادي التكرار.`,
+          title: "تنبيه: جميع الأسماء المدخلة مكررة ⚠️",
+          message: `تم فحص وتدقيق الأسماء المدخلة، وتبين أن جميعها (${totalSkipped} طالب) مكررة ومسجلة بالفعل في ${className} أو مكررة في القائمة المدخلة.\n\nتم تجاهل الإضافة بالكامل لتفادي تكرار الطلاب:\n${duplicatesWithDb.length > 0 ? `• مسجل مسبقاً في الفصل (${duplicatesWithDb.length}): ${duplicatesWithDb.join("، ")}\n` : ""}${duplicatesInImport.length > 0 ? `• مكرر في القائمة المدخلة (${duplicatesInImport.length}): ${duplicatesInImport.join("، ")}` : ""}`,
           type: "warning"
         });
         setPastedStudentsText("");
@@ -1801,6 +1834,7 @@ export default function AdminPanel({
         return;
       }
       
+      // CASE 2: Add non-duplicates
       const studentsList = uniqueNamesInImport.map(name => ({
         name: name,
         gradeId: newStudentGradeId,
@@ -1813,16 +1847,18 @@ export default function AdminPanel({
       setShowAddStudentSection(false);
       await onRefreshData();
       
+      // Notify user with clear notice if any duplicates were skipped
       if (totalSkipped > 0) {
         setAlertState({
-          title: "تم الاستيراد بنجاح مع تجاهل المكررين 📋",
-          message: `تم بنجاح استيراد وتسجيل عدد ${uniqueNamesInImport.length} طالب جديد بالفصل.\n\nتم تجاهل عدد ${totalSkipped} طالب مكرر ولم يتم إضافتهم منعاً للتكرار في قاعدة البيانات:\n• مكرر مع قاعدة البيانات: ${duplicatesWithDb.length > 0 ? duplicatesWithDb.join("، ") : "لا يوجد"}\n• مكرر في الملف المرفق: ${duplicatesInImport.length > 0 ? duplicatesInImport.join("، ") : "لا يوجد"}`,
+          title: "تم الاستيراد بنجاح مع تجاهل الأسماء المكررة ✅",
+          message: `تم بنجاح إضافة وتسجيل (${uniqueNamesInImport.length}) طالب جديد غير مكرر في الفصل.\n\n⚠️ ملاحظة: تم تجاهل عدد (${totalSkipped}) اسم مكرر تلقائياً لمنع التكرار في النظام:\n${duplicatesWithDb.length > 0 ? `• مسجل مسبقاً في الفصل (${duplicatesWithDb.length}): ${duplicatesWithDb.join("، ")}\n` : ""}${duplicatesInImport.length > 0 ? `• مكرر في القائمة المدخلة (${duplicatesInImport.length}): ${duplicatesInImport.join("، ")}` : ""}`,
           type: "warning"
         });
       } else {
-        showMessage(`تم بنجاح استيراد وتسجيل ${uniqueNamesInImport.length} طالب للفصل المحدد!`);
+        showMessage(`تم بنجاح استيراد وتسجيل جميع الطلاب (${uniqueNamesInImport.length} طالب) للفصل المحدد!`);
       }
     } catch (err) {
+      console.error("Error importing students:", err);
       showMessage("حدث خطأ أثناء استيراد قائمة الطلاب", "error");
     } finally {
       setStatsLoading(false);

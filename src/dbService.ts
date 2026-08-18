@@ -207,11 +207,22 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
       }
     });
 
-    // Merge any locally created items that haven't been deleted
+    // Auto-heal & merge any local items not yet in Firestore or from other sessions
     localList.forEach(localItem => {
       if (!seenIds.has(localItem.id)) {
         results.push(localItem);
         seenIds.add(localItem.id);
+
+        // Background push un-synced local items to Firestore so other devices/domains get them immediately!
+        if (currentEmail && currentEmail.includes("@") && !currentEmail.includes("@school.com")) {
+          const toUpload = {
+            ...localItem,
+            userId: currentUid,
+            userEmail: currentEmail,
+            updatedAt: Date.now()
+          };
+          setDoc(doc(db, colName, localItem.id), toUpload, { merge: true }).catch(() => {});
+        }
       }
     });
 
@@ -626,24 +637,16 @@ export async function addGrade(name: string): Promise<string> {
   // 1. Immediately write to local storage cache
   saveOrUpdateLocalItem(GRADES_COLL, newGradeObj);
 
-  // 2. Persist to Firestore
-  try {
-    const docRef = await addDoc(collection(db, GRADES_COLL), { 
-      name: trimmedName,
-      userId: uid,
-      userEmail: email,
-      createdAt: Date.now()
-    });
-    // Update local item with Firestore ID if different
-    if (docRef.id !== generatedId) {
-      removeLocalItem(GRADES_COLL, generatedId);
-      saveOrUpdateLocalItem(GRADES_COLL, { ...newGradeObj, id: docRef.id });
-    }
-    return docRef.id;
-  } catch (err: any) {
-    // Firestore error gracefully caught, local cache preserves the grade!
-    return generatedId;
-  }
+  // 2. Persist to Firestore with explicit document ID
+  setDoc(doc(db, GRADES_COLL, generatedId), { 
+    id: generatedId,
+    name: trimmedName,
+    userId: uid,
+    userEmail: email,
+    createdAt: Date.now()
+  }).catch(() => {});
+
+  return generatedId;
 }
 
 // Add Multiple Grades in a Batch
@@ -652,9 +655,9 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
   const uid = eff.uid;
   const email = eff.email;
 
-  const existingGrades = await getGrades();
+  const localGrades = getLocalItems(GRADES_COLL).filter(g => isDocBelongingToUser(g, uid, email));
   const existingMap = new Map<string, string>();
-  existingGrades.forEach(g => {
+  localGrades.forEach(g => {
     if (g.name) existingMap.set(g.name.trim(), g.id);
   });
 
@@ -679,26 +682,28 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
         userEmail: email,
         createdAt: Date.now()
       });
+      existingMap.set(trimmed, generatedId);
     }
   });
 
   if (toCreate.length > 0) {
-    try {
-      const batch = writeBatch(db);
-      const now = Date.now();
-      toCreate.forEach((item, idx) => {
-        const docRef = doc(collection(db, GRADES_COLL));
-        batch.set(docRef, {
-          name: item.name,
-          userId: uid,
-          userEmail: email,
-          createdAt: now + idx
+    (async () => {
+      try {
+        const batch = writeBatch(db);
+        const now = Date.now();
+        toCreate.forEach((item, idx) => {
+          const docRef = doc(db, GRADES_COLL, item.id);
+          batch.set(docRef, {
+            id: item.id,
+            name: item.name,
+            userId: uid,
+            userEmail: email,
+            createdAt: now + idx
+          });
         });
-      });
-      await batch.commit();
-    } catch (err: any) {
-      // Local cache already holds the grades safely
-    }
+        await batch.commit();
+      } catch (err: any) {}
+    })();
   }
 
   return results;
@@ -762,18 +767,14 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
 
   saveOrUpdateLocalItem(CLASSES_COLL, newClassObj);
 
-  // Firestore background write without waiting or blocking UI
-  addDoc(collection(db, CLASSES_COLL), { 
+  // Firestore background write with deterministic document ID
+  setDoc(doc(db, CLASSES_COLL, generatedId), { 
+    id: generatedId,
     name: trimmedName, 
     gradeId, 
     userId: uid,
     userEmail: email,
     createdAt: Date.now()
-  }).then(docRef => {
-    if (docRef && docRef.id && docRef.id !== generatedId) {
-      removeLocalItem(CLASSES_COLL, generatedId);
-      saveOrUpdateLocalItem(CLASSES_COLL, { ...newClassObj, id: docRef.id });
-    }
   }).catch(() => {});
 
   return generatedId;
@@ -826,8 +827,9 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
         const batch = writeBatch(db);
         const now = Date.now();
         toCreate.forEach((c, idx) => {
-          const docRef = doc(collection(db, CLASSES_COLL));
+          const docRef = doc(db, CLASSES_COLL, c.id);
           batch.set(docRef, {
+            id: c.id,
             name: c.name,
             gradeId: c.gradeId,
             userId: uid,
@@ -879,20 +881,15 @@ export async function addTeacher(name: string): Promise<string> {
 
   saveOrUpdateLocalItem(TEACHERS_COLL, newTeacherObj);
 
-  try {
-    const docRef = await addDoc(collection(db, TEACHERS_COLL), { 
-      name: name.trim(), 
-      userId: uid,
-      userEmail: email
-    });
-    if (docRef.id !== generatedId) {
-      removeLocalItem(TEACHERS_COLL, generatedId);
-      saveOrUpdateLocalItem(TEACHERS_COLL, { ...newTeacherObj, id: docRef.id });
-    }
-    return docRef.id;
-  } catch (err: any) {
-    return generatedId;
-  }
+  setDoc(doc(db, TEACHERS_COLL, generatedId), { 
+    id: generatedId,
+    name: name.trim(), 
+    userId: uid,
+    userEmail: email,
+    createdAt: Date.now()
+  }).catch(() => {});
+
+  return generatedId;
 }
 
 // Add Multiple Teachers in a Batch
@@ -901,28 +898,39 @@ export async function addTeachersBatch(names: string[]): Promise<void> {
   const uid = eff.uid;
   const email = eff.email;
 
+  const toCreate: { id: string; name: string }[] = [];
   names.forEach(name => {
+    const generatedId = generateLocalId("tch");
+    const item = { id: generatedId, name: name.trim() };
+    toCreate.push(item);
     saveOrUpdateLocalItem(TEACHERS_COLL, {
-      id: generateLocalId("tch"),
-      name: name.trim(),
+      id: generatedId,
+      name: item.name,
       userId: uid,
       userEmail: email,
       createdAt: Date.now()
     });
   });
 
-  try {
-    const batch = writeBatch(db);
-    names.forEach(name => {
-      const docRef = doc(collection(db, TEACHERS_COLL));
-      batch.set(docRef, { 
-        name: name.trim(), 
-        userId: uid,
-        userEmail: email
-      });
-    });
-    await batch.commit();
-  } catch (err: any) {}
+  if (toCreate.length > 0) {
+    (async () => {
+      try {
+        const batch = writeBatch(db);
+        const now = Date.now();
+        toCreate.forEach((t, idx) => {
+          const docRef = doc(db, TEACHERS_COLL, t.id);
+          batch.set(docRef, { 
+            id: t.id,
+            name: t.name, 
+            userId: uid,
+            userEmail: email,
+            createdAt: now + idx
+          });
+        });
+        await batch.commit();
+      } catch (err: any) {}
+    })();
+  }
 }
 
 // Delete Teacher
@@ -945,16 +953,45 @@ export async function deleteTeachersBatch(ids: string[]): Promise<void> {
   } catch (err: any) {}
 }
 
-// Add Student
+// Add Student (Deduplicates automatically by classId and normalized student name)
 export async function addStudent(name: string, gradeId: string, classId: string): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
+  const trimmedName = name.trim();
+
+  // Normalize for robust duplicate checking
+  const normName = trimmedName
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/\s+/g, " ");
+
+  const localStudents = getLocalCollection<Student>(STUDENTS_COLL);
+  const existing = localStudents.find(s => {
+    if (s.classId !== classId) return false;
+    const sNorm = (s.name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[أإآ]/g, "ا")
+      .replace(/ة/g, "ه")
+      .replace(/ى/g, "ي")
+      .replace(/[\u064B-\u065F\u0670]/g, "")
+      .replace(/\s+/g, " ");
+    return sNorm === normName;
+  });
+
+  if (existing) {
+    return existing.id;
+  }
+
   const generatedId = generateLocalId("stu");
 
   const newStudentObj = {
     id: generatedId,
-    name: name.trim(),
+    name: trimmedName,
     gradeId,
     classId,
     userId: uid,
@@ -964,56 +1001,95 @@ export async function addStudent(name: string, gradeId: string, classId: string)
 
   saveOrUpdateLocalItem(STUDENTS_COLL, newStudentObj);
 
-  try {
-    const docRef = await addDoc(collection(db, STUDENTS_COLL), { 
-      name: name.trim(), 
-      gradeId, 
-      classId, 
-      userId: uid,
-      userEmail: email
-    });
-    if (docRef.id !== generatedId) {
-      removeLocalItem(STUDENTS_COLL, generatedId);
-      saveOrUpdateLocalItem(STUDENTS_COLL, { ...newStudentObj, id: docRef.id });
-    }
-    return docRef.id;
-  } catch (err: any) {
-    return generatedId;
-  }
+  setDoc(doc(db, STUDENTS_COLL, generatedId), { 
+    id: generatedId,
+    name: trimmedName, 
+    gradeId, 
+    classId, 
+    userId: uid,
+    userEmail: email,
+    createdAt: Date.now()
+  }).catch(() => {});
+
+  return generatedId;
 }
 
-// Add Multiple Students in a Batch
+// Add Multiple Students in a Batch (Ignores duplicates, adds non-duplicates)
 export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
 
+  const localStudents = getLocalCollection<Student>(STUDENTS_COLL);
+  const seenClassAndNames = new Set<string>();
+
+  localStudents.forEach(s => {
+    const sNorm = (s.name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[أإآ]/g, "ا")
+      .replace(/ة/g, "ه")
+      .replace(/ى/g, "ي")
+      .replace(/[\u064B-\u065F\u0670]/g, "")
+      .replace(/\s+/g, " ");
+    seenClassAndNames.add(`${s.classId}:::${sNorm}`);
+  });
+
+  const toCreate: { id: string; name: string; gradeId: string; classId: string }[] = [];
   studentsList.forEach(s => {
+    const trimmed = s.name.trim();
+    if (!trimmed) return;
+
+    const norm = trimmed
+      .toLowerCase()
+      .replace(/[أإآ]/g, "ا")
+      .replace(/ة/g, "ه")
+      .replace(/ى/g, "ي")
+      .replace(/[\u064B-\u065F\u0670]/g, "")
+      .replace(/\s+/g, " ");
+
+    const key = `${s.classId}:::${norm}`;
+    if (seenClassAndNames.has(key)) {
+      // Ignore duplicate
+      return;
+    }
+
+    seenClassAndNames.add(key);
+    const generatedId = generateLocalId("stu");
+    const item = { id: generatedId, name: trimmed, gradeId: s.gradeId, classId: s.classId };
+    toCreate.push(item);
     saveOrUpdateLocalItem(STUDENTS_COLL, {
-      id: generateLocalId("stu"),
-      name: s.name.trim(),
-      gradeId: s.gradeId,
-      classId: s.classId,
+      id: generatedId,
+      name: item.name,
+      gradeId: item.gradeId,
+      classId: item.classId,
       userId: uid,
       userEmail: email,
       createdAt: Date.now()
     });
   });
 
-  try {
-    const batch = writeBatch(db);
-    studentsList.forEach(s => {
-      const docRef = doc(collection(db, STUDENTS_COLL));
-      batch.set(docRef, { 
-        name: s.name.trim(), 
-        gradeId: s.gradeId, 
-        classId: s.classId, 
-        userId: uid,
-        userEmail: email
-      });
-    });
-    await batch.commit();
-  } catch (err: any) {}
+  if (toCreate.length > 0) {
+    (async () => {
+      try {
+        const batch = writeBatch(db);
+        const now = Date.now();
+        toCreate.forEach((s, idx) => {
+          const docRef = doc(db, STUDENTS_COLL, s.id);
+          batch.set(docRef, { 
+            id: s.id,
+            name: s.name, 
+            gradeId: s.gradeId, 
+            classId: s.classId, 
+            userId: uid,
+            userEmail: email,
+            createdAt: now + idx
+          });
+        });
+        await batch.commit();
+      } catch (err: any) {}
+    })();
+  }
 }
 
 // Delete Student
@@ -1158,6 +1234,16 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         if (!seenIds.has(l.id)) {
           results.push(l);
           seenIds.add(l.id);
+
+          if (currentEmail && currentEmail.includes("@") && !currentEmail.includes("@school.com")) {
+            const toUpload = {
+              ...l,
+              userId: currentUid,
+              userEmail: currentEmail,
+              updatedAt: Date.now()
+            };
+            setDoc(doc(db, colName, l.id), toUpload, { merge: true }).catch(() => {});
+          }
         }
       });
       setLocalItems(colName, results);

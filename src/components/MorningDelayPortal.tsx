@@ -99,8 +99,8 @@ export default function MorningDelayPortal({
   const [delayMinutes, setDelayMinutes] = useState<number>(15);
   const [notes, setNotes] = useState<string>("");
 
-  // Mode Selection: "search" (Instant Student Lookup) vs "class" (Grid by Class)
-  const [entryMode, setEntryMode] = useState<"search" | "class">("search");
+  // Mode Selection: "search" (Instant Student Lookup) vs "class" (Grid by Class) - Default to "class"
+  const [entryMode, setEntryMode] = useState<"search" | "class">("class");
 
   // Search Filter State
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>("");
@@ -141,17 +141,33 @@ export default function MorningDelayPortal({
     };
   }, [selectedDate]);
 
+  // Sorted Grades
+  const sortedGrades = useMemo(() => {
+    return [...grades].sort((a, b) => {
+      const timeA = (a as any).createdAt || 0;
+      const timeB = (b as any).createdAt || 0;
+      if (timeA !== timeB) return timeA - timeB;
+      return a.name.localeCompare(b.name, "ar");
+    });
+  }, [grades]);
+
   // Set default grade and class when grades load
   useEffect(() => {
-    if (grades.length > 0 && !selectedGradeId) {
-      setSelectedGradeId(grades[0].id);
+    if (sortedGrades.length > 0 && !selectedGradeId) {
+      setSelectedGradeId(sortedGrades[0].id);
     }
-  }, [grades, selectedGradeId]);
+  }, [sortedGrades, selectedGradeId]);
 
-  // Filtered classes based on selected grade
+  // Filtered and sorted classes based on selected grade
   const filteredClasses = useMemo(() => {
     if (!selectedGradeId) return [];
-    return classes.filter(c => c.gradeId === selectedGradeId);
+    const list = classes.filter(c => c.gradeId === selectedGradeId);
+    return list.sort((a, b) => {
+      const numA = parseInt(a.name.match(/\d+/)?.[0] || "999", 10);
+      const numB = parseInt(b.name.match(/\d+/)?.[0] || "999", 10);
+      if (numA !== numB) return numA - numB;
+      return a.name.localeCompare(b.name, "ar");
+    });
   }, [classes, selectedGradeId]);
 
   // Set default class when grade changes
@@ -164,7 +180,9 @@ export default function MorningDelayPortal({
   // Filtered students for class view
   const classStudents = useMemo(() => {
     if (!selectedGradeId || !selectedClassId) return [];
-    return students.filter(s => s.gradeId === selectedGradeId && s.classId === selectedClassId);
+    return students
+      .filter(s => s.gradeId === selectedGradeId && s.classId === selectedClassId)
+      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [students, selectedGradeId, selectedClassId]);
 
   // Instant Search Students List
@@ -188,12 +206,16 @@ export default function MorningDelayPortal({
       });
   }, [students, studentSearchQuery, grades, classes, records]);
 
-  // Quick record handler for a student
+  // Quick record handler for a student - Records exact real-time on click!
   const handleRecordStudent = async (student: Student, overrideReason?: string) => {
     setSavingStudentId(student.id);
     const gr = grades.find(g => g.id === student.gradeId);
     const cl = classes.find(c => c.id === student.classId);
     const finalReason = overrideReason || (selectedReason === "أخرى" ? (customReason || "أخرى") : selectedReason);
+    
+    // Always capture exact real-time when clicking on the student!
+    const exactRecordTime = getCurrentTimeString();
+    setArrivalTime(exactRecordTime);
 
     try {
       const recordPayload = {
@@ -204,7 +226,7 @@ export default function MorningDelayPortal({
         classId: student.classId,
         className: cl?.name || "",
         date: selectedDate,
-        arrivalTime: arrivalTime || getCurrentTimeString(),
+        arrivalTime: exactRecordTime,
         delayMinutes: Number(delayMinutes) || 15,
         reason: finalReason,
         recordedBy: recorderName.trim() || "مشرف التأخر الصباحي",
@@ -213,7 +235,7 @@ export default function MorningDelayPortal({
 
       await saveMorningDelayRecord(recordPayload);
       
-      setSaveToast(`تم تسجيل تأخر الطالب (${student.name}) بنجاح`);
+      setSaveToast(`تم تسجيل تأخر (${student.name}) في تمام الساعة ${exactRecordTime}`);
       setTimeout(() => setSaveToast(null), 3000);
       
       // Clear quick notes if any
@@ -640,37 +662,73 @@ export default function MorningDelayPortal({
         {/* MODE B: CLASS-BASED QUICK GRID */}
         {entryMode === "class" && (
           <div className="pt-3 border-t border-slate-100 space-y-4">
-            {/* Grade & Class selectors */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold text-slate-600">الصف:</span>
-                <select
-                  value={selectedGradeId}
-                  onChange={(e) => setSelectedGradeId(e.target.value)}
-                  className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none cursor-pointer"
-                >
-                  {grades.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
+            {/* Grade & Class selectors (Pills Style matching Teacher Portal and Screenshot) */}
+            <div className="space-y-3 bg-slate-50/80 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black text-slate-800">الصف والفصل</label>
+                <span className="text-[11px] text-slate-500 font-bold">
+                  عدد طلاب الفصل: <strong className="text-indigo-700 font-black">{classStudents.length}</strong> طالب
+                </span>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold text-slate-600">الفصل:</span>
-                <select
-                  value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none cursor-pointer"
-                >
-                  {filteredClasses.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+              {/* Grade Select Row */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap scrollbar-none">
+                {sortedGrades.map((g, idx) => {
+                  const isSelected = selectedGradeId === g.id;
+                  const gradeShortName = g.name.replace(/^الصف\s+/, "").replace(/^صف\s+/, "");
+                  return (
+                    <button
+                      key={`${g.id}-${idx}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedGradeId(g.id);
+                        const gradeClasses = classes.filter(c => c.gradeId === g.id);
+                        if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
+                          setSelectedClassId(gradeClasses[0].id);
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.02] active:scale-95 ${
+                        isSelected
+                          ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span>🏫</span>
+                      <span>{gradeShortName}</span>
+                    </button>
+                  );
+                })}
+                {grades.length === 0 && (
+                  <p className="text-xs text-slate-400 font-bold py-1">لا توجد صفوف دراسية</p>
+                )}
               </div>
 
-              <div className="text-[11px] text-slate-500 font-bold mr-auto">
-                عدد طلاب الفصل: <strong className="text-slate-800">{classStudents.length}</strong>
-              </div>
+              {/* Class Select Row (Separate Line, Pills) */}
+              {selectedGradeId && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap scrollbar-none pt-1">
+                  {filteredClasses.map((c, idx) => {
+                    const isSelected = selectedClassId === c.id;
+                    const classNum = c.name.replace(/^الفصل\s*/, "").replace(/^فصل\s*/, "").trim();
+                    return (
+                      <button
+                        key={`${c.id}-${idx}`}
+                        type="button"
+                        onClick={() => setSelectedClassId(c.id)}
+                        className={`flex items-center justify-center min-w-[40px] px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
+                          isSelected
+                            ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                            : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50/70"
+                        }`}
+                      >
+                        <span>{classNum || c.name}</span>
+                      </button>
+                    );
+                  })}
+                  {filteredClasses.length === 0 && (
+                    <p className="text-xs text-slate-400 font-bold py-1">لا توجد فصول تابعة لهذا الصف</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Students Grid */}
@@ -689,10 +747,10 @@ export default function MorningDelayPortal({
                     <div
                       key={st.id}
                       onClick={() => !isSaving && handleRecordStudent(st)}
-                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-2 select-none ${
+                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-2 select-none relative group ${
                         isRecorded
                           ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400/30 shadow-3xs"
-                          : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs"
+                          : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs hover:scale-[1.01]"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-1.5">
@@ -708,16 +766,29 @@ export default function MorningDelayPortal({
                         {isSaving ? (
                           <Loader2 className="w-4 h-4 animate-spin text-amber-600 shrink-0" />
                         ) : isRecorded ? (
-                          <span className="bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md shrink-0 flex items-center gap-0.5">
-                            <Clock className="w-3 h-3" /> {rec?.arrivalTime || "متأخر"}
-                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-3xs">
+                              <Clock className="w-3 h-3" /> {rec?.arrivalTime || "متأخر"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (rec) handleDeleteRecord(rec.id, st.name);
+                              }}
+                              className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                              title="حذف تسجيل التأخر"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         ) : null}
                       </div>
 
                       <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 pt-1 border-t border-slate-200/60">
-                        <span>{isRecorded ? `السبب: ${rec?.reason || "تأخر"}` : "اضغط للرصد 👈"}</span>
-                        <span className={`font-black ${isRecorded ? "text-amber-700" : "text-slate-500"}`}>
-                          {isRecorded ? "تم الرصد" : "+ رصد"}
+                        <span className="truncate">{isRecorded ? `السبب: ${rec?.reason || "تأخر"}` : "اضغط للرصد المباشر 👈"}</span>
+                        <span className={`font-black shrink-0 ${isRecorded ? "text-amber-700" : "text-amber-600"}`}>
+                          {isRecorded ? "مسجل متأخراً" : "+ رصد الآن"}
                         </span>
                       </div>
                     </div>
