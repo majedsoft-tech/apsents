@@ -1,7 +1,16 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import firebaseConfig from "../firebase-applet-config.json";
+// Explicit Firebase Project Configuration provided by user
+export const firebaseConfig = {
+  apiKey: "AIzaSyCWABVdUWYt49PQXT1duAttR0ql8043yNs",
+  authDomain: "apsents.firebaseapp.com",
+  projectId: "apsents",
+  storageBucket: "apsents.firebasestorage.app",
+  messagingSenderId: "717724738568",
+  appId: "1:717724738568:web:a8f6ca1b77f80c30ed1dbd",
+  measurementId: "G-GBSB6SX96T"
+};
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
