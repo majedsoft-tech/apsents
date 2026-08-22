@@ -357,39 +357,25 @@ export default function MorningDelayPortal({
       )}
 
       {/* 1. PORTAL HERO HEADER */}
-      <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 rounded-3xl p-5 md:p-7 text-white shadow-xl shadow-amber-950/15 relative overflow-hidden">
+      <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 rounded-3xl p-5 md:p-6 text-white shadow-xl shadow-amber-950/15 relative overflow-hidden">
         {/* Subtle decorative circles */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl pointer-events-none"></div>
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-amber-400/20 rounded-full -ml-16 -mb-16 blur-xl pointer-events-none"></div>
 
-        <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="space-y-1.5">
+        <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-amber-100 text-xs font-extrabold border border-white/20">
-              <SunMedium className="w-3.5 h-3.5 text-amber-200 animate-spin" />
+              <SunMedium className="w-3.5 h-3.5 text-amber-200" />
               <span>{schoolName ? `بوابة ${schoolName}` : "بوابة الرصد الميداني"}</span>
             </div>
             <h1 className="text-xl md:text-2xl font-black tracking-tight flex items-center gap-2.5">
-              <Clock className="w-7 h-7 text-amber-200" />
+              <Clock className="w-6 h-6 text-amber-200" />
               <span>بوابة تسجيل التأخر الصباحي</span>
             </h1>
-            <p className="text-xs text-amber-100/90 font-medium">
-              توثيق حضور الطلاب المتأخرين عن الطابور الصباحي والحصة الأولى في ثوانٍ معدودة
-            </p>
           </div>
 
-          {/* Quick Date Control & Nav Button */}
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            {navigateTo && !isDirectLink && (
-              <button
-                type="button"
-                onClick={() => navigateTo("admin")}
-                className="px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white font-extrabold text-xs rounded-xl border border-white/25 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                <ArrowRight className="w-4 h-4" />
-                <span>لوحة التحكم</span>
-              </button>
-            )}
-
+          {/* Quick Date Control */}
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
             {/* Date Picker Bar */}
             <div className="flex items-center bg-white/20 backdrop-blur-md border border-white/25 rounded-2xl p-1 text-white shadow-inner">
               <button
@@ -430,165 +416,20 @@ export default function MorningDelayPortal({
                 </button>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* Real-time counters summary row */}
-        <div className="mt-5 pt-4 border-t border-white/15 grid grid-cols-3 gap-2.5 max-w-xl">
-          <div className="bg-white/15 backdrop-blur-md rounded-2xl p-2.5 text-center border border-white/10">
-            <span className="text-[10px] font-bold text-amber-100 block">إجمالي المتأخرين اليوم</span>
-            <span className="text-xl font-black text-white">{stats.total}</span>
-          </div>
-          <div className="bg-emerald-500/25 backdrop-blur-md rounded-2xl p-2.5 text-center border border-emerald-400/20">
-            <span className="text-[10px] font-bold text-emerald-100 block">تأخر بعذر</span>
-            <span className="text-xl font-black text-emerald-200">{stats.excused}</span>
-          </div>
-          <div className="bg-rose-500/25 backdrop-blur-md rounded-2xl p-2.5 text-center border border-rose-400/20">
-            <span className="text-[10px] font-bold text-rose-100 block">بدون عذر</span>
-            <span className="text-xl font-black text-rose-200">{stats.unexcused}</span>
+            {/* Total count badge */}
+            <div className="bg-white/20 backdrop-blur-md rounded-2xl px-3.5 py-1.5 border border-white/20 text-center shrink-0">
+              <span className="text-[10px] font-bold text-amber-100 ml-1.5">المتأخرون:</span>
+              <span className="text-base font-black text-white">{stats.total}</span>
+            </div>
           </div>
         </div>
       </div>
 
       {/* 2. REGISTRATION CONTROLS & SETTINGS CARD */}
-      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 md:p-6 space-y-5">
-        
-        {/* Section title & Entry Mode Toggles */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-amber-50 rounded-xl text-amber-600 border border-amber-200">
-              <UserCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-black text-slate-800">رصد وتسجيل التأخر الصباحي</h2>
-              <p className="text-[11px] text-slate-400 font-semibold">اختر الفصل ثم اضغط على اسم الطالب للرصد المباشر والفوري</p>
-            </div>
-          </div>
-
-          {/* Mode Switcher Pills */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setEntryMode("search")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                entryMode === "search"
-                  ? "bg-amber-500 text-white shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Search className="w-3.5 h-3.5" />
-              <span>البحث السريع الشامل</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setEntryMode("class")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                entryMode === "class"
-                  ? "bg-amber-500 text-white shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>الرصد حسب الفصل</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 3. INTERACTIVE REGISTRATION AREA */}
-        
-        {/* MODE A: INSTANT STUDENT LOOKUP / SEARCH */}
-        {entryMode === "search" && (
-          <div className="pt-3 border-t border-slate-100 space-y-3">
-            <div className="relative">
-              <Search className="w-5 h-5 text-slate-400 absolute right-3.5 top-3" />
-              <input
-                type="text"
-                value={studentSearchQuery}
-                onChange={(e) => setStudentSearchQuery(e.target.value)}
-                placeholder="🔍 ابحث عن اسم الطالب للرصد المباشر (مثال: عبدالله، خالد، فهد)..."
-                className="w-full text-sm font-black pr-11 pl-4 py-3 bg-slate-50 border-2 border-amber-200 focus:border-amber-500 focus:bg-white rounded-2xl outline-none shadow-inner transition placeholder:text-slate-400"
-                autoFocus
-              />
-              {studentSearchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setStudentSearchQuery("")}
-                  className="absolute left-3 top-3 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-0.5 rounded-lg font-bold cursor-pointer"
-                >
-                  مسح
-                </button>
-              )}
-            </div>
-
-            {/* Results Dropdown / Grid */}
-            {studentSearchQuery.trim() && (
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {searchResults.length === 0 ? (
-                  <div className="text-center py-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs font-bold">
-                    لم يتم العثور على طالب مطابق للاسم &quot;{studentSearchQuery}&quot;
-                  </div>
-                ) : (
-                  searchResults.map((s) => {
-                    const isSaving = savingStudentId === s.id;
-                    return (
-                      <div
-                        key={s.id}
-                        className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
-                          s.isRecorded
-                            ? "bg-amber-50/70 border-amber-300 shadow-3xs"
-                            : "bg-white border-slate-200 hover:border-amber-400 hover:shadow-xs"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${
-                            s.isRecorded ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
-                          }`}>
-                            {s.name.charAt(0)}
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-black text-slate-800">{s.name}</h4>
-                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-bold mt-0.5">
-                              <span className="bg-slate-100 px-1.5 py-0.5 rounded-md text-slate-700 border border-slate-200">{s.gradeName}</span>
-                              <span className="bg-slate-100 px-1.5 py-0.5 rounded-md text-slate-700 border border-slate-200">{s.className}</span>
-                              {s.isRecorded && (
-                                <span className="bg-amber-500 text-white px-2 py-0.5 rounded-md font-black">
-                                  مسجل متأخراً اليوم ⏰
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={isSaving}
-                          onClick={() => handleRecordStudent(s)}
-                          className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50 ${
-                            s.isRecorded
-                              ? "bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
-                              : "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/20"
-                          }`}
-                        >
-                          {isSaving ? (
-                            <Loader2 className="w-4 h-4 animate-spin text-white" />
-                          ) : (
-                            <Check className="w-4 h-4" />
-                          )}
-                          <span>{s.isRecorded ? "تحديث التأخر" : "تسجيل تأخر الطالب"}</span>
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* MODE B: CLASS-BASED QUICK GRID */}
-        {entryMode === "class" && (
-          <div className="pt-3 border-t border-slate-100 space-y-4">
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-4 md:p-6 space-y-4">
+        {/* CLASS-BASED REGISTRATION */}
+        <div className="space-y-4">
             {/* Grade & Class selectors (Pills Style matching Teacher Portal and Screenshot) */}
             <div className="space-y-3 bg-slate-50/80 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80">
               <div className="flex items-center justify-between">
@@ -855,7 +696,6 @@ export default function MorningDelayPortal({
               </div>
             )}
           </div>
-        )}
       </div>
 
       {/* 4. TODAY'S REGISTERED DELAY LOG (سجل التأخر الصباحي لليوم) */}
