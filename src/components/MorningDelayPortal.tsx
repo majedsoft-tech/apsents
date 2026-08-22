@@ -33,7 +33,9 @@ import {
   SunMedium, 
   ArrowRight,
   HelpCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  List,
+  LayoutGrid
 } from "lucide-react";
 
 interface MorningDelayPortalProps {
@@ -99,8 +101,9 @@ export default function MorningDelayPortal({
   const [delayMinutes, setDelayMinutes] = useState<number>(15);
   const [notes, setNotes] = useState<string>("");
 
-  // Mode Selection: "search" (Instant Student Lookup) vs "class" (Grid by Class) - Default to "class"
+  // Mode Selection: "search" (Instant Student Lookup) vs "class" (List/Grid by Class) - Default to "class"
   const [entryMode, setEntryMode] = useState<"search" | "class">("class");
+  const [classViewMode, setClassViewMode] = useState<"list" | "grid">("list");
 
   // Search Filter State
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>("");
@@ -731,69 +734,200 @@ export default function MorningDelayPortal({
               )}
             </div>
 
-            {/* Students Grid */}
+            {/* Students Display Area */}
             {classStudents.length === 0 ? (
               <div className="text-center py-8 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs font-bold">
                 لا يوجد طلاب مسجلين في هذا الفصل حالياً
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                {classStudents.map((st) => {
-                  const isRecorded = records.some(r => r.studentId === st.id);
-                  const isSaving = savingStudentId === st.id;
-                  const rec = records.find(r => r.studentId === st.id);
-
-                  return (
-                    <div
-                      key={st.id}
-                      onClick={() => !isSaving && handleRecordStudent(st)}
-                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-2 select-none relative group ${
-                        isRecorded
-                          ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400/30 shadow-3xs"
-                          : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs hover:scale-[1.01]"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
-                            isRecorded ? "bg-amber-600 text-white" : "bg-slate-200 text-slate-700"
-                          }`}>
-                            {st.name.charAt(0)}
-                          </div>
-                          <p className="text-xs font-black text-slate-800 truncate">{st.name}</p>
-                        </div>
-
-                        {isSaving ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-amber-600 shrink-0" />
-                        ) : isRecorded ? (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-3xs">
-                              <Clock className="w-3 h-3" /> {rec?.arrivalTime || "متأخر"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (rec) handleDeleteRecord(rec.id, st.name);
-                              }}
-                              className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
-                              title="حذف تسجيل التأخر"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 pt-1 border-t border-slate-200/60">
-                        <span className="truncate">{isRecorded ? `السبب: ${rec?.reason || "تأخر"}` : "اضغط للرصد المباشر 👈"}</span>
-                        <span className={`font-black shrink-0 ${isRecorded ? "text-amber-700" : "text-amber-600"}`}>
-                          {isRecorded ? "مسجل متأخراً" : "+ رصد الآن"}
+              <div className="space-y-0 rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs">
+                {/* List Sub-Header matching Teacher Attendance List */}
+                <div className="bg-slate-50/80 border-b border-slate-200/90 px-4 py-3 flex flex-wrap gap-3 justify-between items-center text-right">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-slate-800">قائمة طلاب الفصل ({classStudents.length})</span>
+                      {classStudents.filter(st => records.some(r => r.studentId === st.id)).length > 0 && (
+                        <span className="text-[10px] font-black bg-amber-500 text-white px-2 py-0.5 rounded-full shadow-3xs">
+                          {classStudents.filter(st => records.some(r => r.studentId === st.id)).length} متأخر اليوم
                         </span>
-                      </div>
+                      )}
                     </div>
-                  );
-                })}
+                    <span className="text-[10px] font-bold text-slate-400">اضغط على اسم الطالب للرصد المباشر للتأخر الصباحي</span>
+                  </div>
+
+                  {/* View Mode Switcher (List vs Grid) */}
+                  <div className="flex items-center bg-white p-0.5 rounded-xl border border-slate-200 shadow-3xs">
+                    <button
+                      type="button"
+                      onClick={() => setClassViewMode("list")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                        classViewMode === "list"
+                          ? "bg-amber-500 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      title="عرض كقائمة (مثل تسجيل الغياب)"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>قائمة</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setClassViewMode("grid")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                        classViewMode === "grid"
+                          ? "bg-amber-500 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      title="عرض كشبكة"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>شبكة</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 1. LIST VIEW (Default - Like Attendance Portal) */}
+                {classViewMode === "list" ? (
+                  <div className="divide-y divide-slate-100 bg-white">
+                    {classStudents.map((st, idx) => {
+                      const isRecorded = records.some(r => r.studentId === st.id);
+                      const isSaving = savingStudentId === st.id;
+                      const rec = records.find(r => r.studentId === st.id);
+
+                      return (
+                        <div
+                          key={st.id}
+                          onClick={() => !isSaving && handleRecordStudent(st)}
+                          className={`flex items-center justify-between px-4 py-3.5 cursor-pointer transition select-none ${
+                            isRecorded
+                              ? "bg-amber-50/70 hover:bg-amber-100/70"
+                              : "bg-white hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className={`text-xs font-black w-7 h-7 flex items-center justify-center rounded-full transition-all ${
+                              isRecorded
+                                ? "bg-amber-500 text-white shadow-3xs"
+                                : "bg-slate-100 text-slate-600"
+                            }`}>
+                              {idx + 1}
+                            </span>
+                            <div>
+                              <span className="text-sm font-bold text-slate-800">
+                                {st.name}
+                              </span>
+                              {isRecorded && (
+                                <div className="flex items-center gap-2 text-[10px] text-slate-500 font-bold mt-0.5">
+                                  <span>السبب: <strong className="text-amber-800 font-black">{rec?.reason || "تأخر"}</strong></span>
+                                  {rec?.recordedBy && (
+                                    <>
+                                      <span className="text-slate-300">•</span>
+                                      <span>المشرف: {rec.recordedBy}</span>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {isSaving ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-100 px-3 py-1.5 rounded-xl animate-pulse">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>جاري الرصد...</span>
+                              </span>
+                            ) : isRecorded ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-amber-800 bg-amber-100 border border-amber-300 px-2.5 py-1.5 rounded-xl shadow-2xs">
+                                  <span>متأخر</span>
+                                  <span className="bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-md font-black">
+                                    {rec?.arrivalTime || "07:30"}
+                                  </span>
+                                  <span>⏳</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (rec) handleDeleteRecord(rec.id, st.name);
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-xl transition cursor-pointer"
+                                  title="إلغاء تسجيل التأخر"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-amber-600 bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-200 px-3 py-1.5 rounded-xl transition">
+                                <span>+ تسجيل التأخر</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* 2. GRID VIEW */
+                  <div className="p-3 bg-white grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                    {classStudents.map((st) => {
+                      const isRecorded = records.some(r => r.studentId === st.id);
+                      const isSaving = savingStudentId === st.id;
+                      const rec = records.find(r => r.studentId === st.id);
+
+                      return (
+                        <div
+                          key={st.id}
+                          onClick={() => !isSaving && handleRecordStudent(st)}
+                          className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-2 select-none relative group ${
+                            isRecorded
+                              ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400/30 shadow-3xs"
+                              : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs hover:scale-[1.01]"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
+                                isRecorded ? "bg-amber-600 text-white" : "bg-slate-200 text-slate-700"
+                              }`}>
+                                {st.name.charAt(0)}
+                              </div>
+                              <p className="text-xs font-black text-slate-800 truncate">{st.name}</p>
+                            </div>
+
+                            {isSaving ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-amber-600 shrink-0" />
+                            ) : isRecorded ? (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-3xs">
+                                  <Clock className="w-3 h-3" /> {rec?.arrivalTime || "متأخر"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (rec) handleDeleteRecord(rec.id, st.name);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                                  title="حذف تسجيل التأخر"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 pt-1 border-t border-slate-200/60">
+                            <span className="truncate">{isRecorded ? `السبب: ${rec?.reason || "تأخر"}` : "اضغط للرصد المباشر 👈"}</span>
+                            <span className={`font-black shrink-0 ${isRecorded ? "text-amber-700" : "text-amber-600"}`}>
+                              {isRecorded ? "مسجل متأخراً" : "+ رصد الآن"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
