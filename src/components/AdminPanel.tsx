@@ -217,6 +217,7 @@ export default function AdminPanel({
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
   const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "selected_attendance" | "behavior" | "student_report">("attendance");
+  const [attendanceViewMode, setAttendanceViewMode] = useState<"list" | "grid">("list");
   const [hasNewBehavior, setHasNewBehavior] = useState<boolean>(false);
   const [newBehaviorIds, setNewBehaviorIds] = useState<string[]>([]);
   const [behaviorSearchFilter, setBehaviorSearchFilter] = useState<string>("");
@@ -1841,7 +1842,14 @@ export default function AdminPanel({
         classId: newStudentClassId
       }));
       
-      await addStudentsBatch(studentsList);
+      const createdStudents = await addStudentsBatch(studentsList);
+      if (createdStudents && createdStudents.length > 0) {
+        setStudents(prev => {
+          const existingIds = new Set(prev.map(s => s.id));
+          const toAdd = createdStudents.filter(s => !existingIds.has(s.id));
+          return [...prev, ...toAdd].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+        });
+      }
       setPastedStudentsText("");
       setParsedStudentNames([]);
       setShowAddStudentSection(false);
@@ -1936,7 +1944,14 @@ export default function AdminPanel({
         return;
       }
       
-      await addTeachersBatch(uniqueNamesInImport);
+      const createdTeachers = await addTeachersBatch(uniqueNamesInImport);
+      if (createdTeachers && createdTeachers.length > 0) {
+        setTeachers(prev => {
+          const existingIds = new Set(prev.map(t => t.id));
+          const toAdd = createdTeachers.filter(t => !existingIds.has(t.id));
+          return [...prev, ...toAdd].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+        });
+      }
       setPastedTeachersText("");
       setParsedTeacherNames([]);
       await onRefreshData();
@@ -2254,21 +2269,54 @@ export default function AdminPanel({
               </button>
             </div>
 
-            {/* Print Action */}
-            <button
-              type="button"
-              onClick={() => {
-                if (activeStatsTab === "selected_attendance") {
-                  handlePrintSelectedAttendance();
-                } else {
-                  window.print();
-                }
-              }}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-98 transition-all cursor-pointer"
-            >
-              <span>🖨️</span>
-              <span>{activeStatsTab === "selected_attendance" ? "طباعة الغياب المحدد" : "طباعة الملخص"}</span>
-            </button>
+            {/* Actions: View switcher & Print Action */}
+            <div className="flex items-center gap-2">
+              {activeStatsTab === "attendance" && (
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/60" dir="rtl">
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceViewMode("list")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                      attendanceViewMode === "list"
+                        ? "bg-white text-indigo-700 shadow-3xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="عرض كقائمة"
+                  >
+                    <span>☰</span>
+                    <span>قائمة</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceViewMode("grid")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                      attendanceViewMode === "grid"
+                        ? "bg-white text-indigo-700 shadow-3xs"
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                    title="عرض كشبكة"
+                  >
+                    <span>⊞</span>
+                    <span>شبكة</span>
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeStatsTab === "selected_attendance") {
+                    handlePrintSelectedAttendance();
+                  } else {
+                    window.print();
+                  }
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-98 transition-all cursor-pointer"
+              >
+                <span>🖨️</span>
+                <span>{activeStatsTab === "selected_attendance" ? "طباعة الغياب المحدد" : "طباعة الملخص"}</span>
+              </button>
+            </div>
           </div>
 
           {/* Distinctive empty state warning window with motion effects */}
@@ -2334,22 +2382,26 @@ export default function AdminPanel({
             </motion.div>
           )}
 
-          {/* TAB CONTENT: DAILY ATTENDANCE (DYNAMIC COLUMNS FOR ALL GRADES) */}
+          {/* TAB CONTENT: DAILY ATTENDANCE (DYNAMIC COLUMNS / LIST FOR ALL GRADES) */}
           {activeStatsTab === "attendance" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 animate-fadeIn">
+            <div className={`${
+              attendanceViewMode === "list" 
+                ? "flex flex-col space-y-4" 
+                : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5"
+            } animate-fadeIn`}>
               {grades.map(grade => {
                 const gradeEntries = todayStats.entriesByGrade[grade.id] || [];
                 const gradeClasses = classes.filter(c => c.gradeId === grade.id);
                 return (
                   <div key={grade.id} className="flex flex-col">
-                    <div className="bg-[#1e40af] text-white px-3 py-1.5 rounded-t-2xl flex items-center justify-between border-b border-blue-900/20">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-black">{grade.name}</span>
-                        <span className="bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                          {gradeEntries.length}
+                    <div className="bg-[#1e40af] text-white px-3.5 py-2 rounded-t-2xl flex items-center justify-between border-b border-blue-900/20 shadow-3xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs sm:text-sm font-black">{grade.name}</span>
+                        <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center justify-center shadow-3xs">
+                          {gradeEntries.length} غياب
                         </span>
                       </div>
-                      <span className="bg-blue-700/80 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-md">
+                      <span className="bg-blue-700/90 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md">
                         {getTodayFormattedArabic()}
                       </span>
                     </div>
@@ -2368,7 +2420,7 @@ export default function AdminPanel({
                               key={cls.id}
                               className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border flex items-center gap-1 shadow-3xs transition ${
                                 hasAbsence
-                                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                                  ? "bg-rose-50 text-rose-700 border-rose-200 font-black"
                                   : "bg-slate-50/10 text-slate-300 border-slate-700/50 hover:bg-slate-50/20"
                               }`}
                             >
@@ -2385,68 +2437,74 @@ export default function AdminPanel({
                         <table className="w-full text-right text-xs" dir="rtl">
                           <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
                             <tr>
-                              <th className="py-1.5 px-2 text-right">وقت</th>
-                              <th className="py-1.5 px-2 text-right">طالب</th>
-                              <th className="py-1.5 px-1 text-center">حصة</th>
-                              <th className="py-1.5 px-1 text-center">فصل</th>
-                              <th className="py-1.5 px-2 text-right">معلم</th>
-                              {!isReadOnly && <th className="py-1.5 px-1.5 text-center">⚙️</th>}
+                              <th className="py-2 px-3 text-center w-12">#</th>
+                              <th className="py-2 px-3 text-right">وقت التسجيل</th>
+                              <th className="py-2 px-3 text-right">اسم الطالب</th>
+                              <th className="py-2 px-2 text-center">الحصة</th>
+                              <th className="py-2 px-2 text-center">الفصل</th>
+                              <th className="py-2 px-3 text-right">المعلم المعتمد</th>
+                              {!isReadOnly && <th className="py-2 px-2 text-center">⚙️</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {gradeEntries.length === 0 ? (
                               <tr>
-                                <td colSpan={isReadOnly ? 5 : 6} className="py-12 text-center text-slate-400 font-black">
-                                  <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب مسجل</span>
+                                <td colSpan={isReadOnly ? 6 : 7} className="py-10 text-center text-slate-400 font-black">
+                                  <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب مسجل لهذا الصف اليوم 👍</span>
                                 </td>
                               </tr>
                             ) : (
-                              gradeEntries.map((entry: any) => (
+                              gradeEntries.map((entry: any, index: number) => (
                                 <tr 
                                   key={entry.id} 
                                   className={`transition ${
                                     entry.isNoAbsenceDummy 
                                       ? "bg-emerald-50/60 hover:bg-emerald-100/80 dark:bg-emerald-950/20 dark:hover:bg-emerald-900/30" 
-                                      : "hover:bg-slate-50/50"
+                                      : "hover:bg-slate-50/70"
                                   }`}
                                 >
-                                  <td className="py-0.5 px-2 font-semibold text-slate-500 text-[11px]">{entry.time}</td>
-                                  <td className="py-0.5 px-2">
+                                  <td className="py-2 px-3 text-center font-bold text-slate-400 text-xs">
+                                    <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto text-[11px] font-black">
+                                      {index + 1}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 font-semibold text-slate-500 text-xs whitespace-nowrap">{entry.time}</td>
+                                  <td className="py-2 px-3">
                                     <div className="flex flex-col justify-center">
                                       {entry.isNoAbsenceDummy ? (
                                         <span 
-                                          className="bg-emerald-600 text-white font-black text-[9.5px] px-1.5 py-0.5 rounded-md inline-block text-center shadow-3xs whitespace-nowrap"
+                                          className="bg-emerald-600 text-white font-black text-xs px-2 py-0.5 rounded-md inline-block text-center shadow-3xs whitespace-nowrap"
                                           title={entry.studentName}
                                         >
                                           {entry.studentName}
                                         </span>
                                       ) : (
-                                        <span className="font-extrabold text-slate-800 text-[9.5px] whitespace-nowrap block" title={entry.studentName}>
+                                        <span className="font-extrabold text-slate-900 text-xs sm:text-sm whitespace-nowrap block" title={entry.studentName}>
                                           {entry.studentName}
                                         </span>
                                       )}
                                     </div>
                                   </td>
-                                  <td className="py-0.5 px-1 text-center">
-                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
+                                  <td className="py-2 px-2 text-center">
+                                    <span className={`font-extrabold text-xs w-6 h-6 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
                                       {getPeriodNum(entry.periodCode)}
                                     </span>
                                   </td>
-                                  <td className="py-0.5 px-1 text-center">
-                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
+                                  <td className="py-2 px-2 text-center">
+                                    <span className={`font-extrabold text-xs w-6 h-6 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
                                       {getClassNum(entry.classCode)}
                                     </span>
                                   </td>
-                                  <td className="py-0.5 px-2 text-slate-600 font-semibold text-[9.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
+                                  <td className="py-2 px-3 text-slate-600 font-bold text-xs whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
                                   {!isReadOnly && (
-                                    <td className="py-0.5 px-1.5 text-center">
+                                    <td className="py-2 px-2 text-center">
                                       <button
                                         type="button"
                                         onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
-                                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                        className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
                                         title="حذف هذا تسجيل الغياب"
                                       >
-                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <Trash2 className="w-4 h-4" />
                                       </button>
                                     </td>
                                   )}
@@ -3078,20 +3136,8 @@ export default function AdminPanel({
                   />
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] text-slate-400 font-medium">
-                      ملاحظة: اضغط Ctrl + Enter أو زر الإضافة للحفظ
+                      ملاحظة: اضغط Ctrl + Enter في المربع للحفظ
                     </span>
-                    <button
-                      type="submit"
-                      disabled={submitting.addGrade || !newGradeName.trim()}
-                      className="bg-[#5046e5] hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold px-6 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer whitespace-nowrap"
-                    >
-                      {submitting.addGrade ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Plus className="w-4 h-4" />
-                      )}
-                      <span>إضافة الصفوف</span>
-                    </button>
                   </div>
                 </form>
               </div>
@@ -3832,10 +3878,10 @@ export default function AdminPanel({
                 </div>
               )}
 
-              {/* 3. STUDENTS LIST TABLE WITH PASSWORDS & CONTROLS */}
+              {/* 3. STUDENTS LIST TABLE WITH CONTROLS */}
               <div className="bg-white rounded-2xl shadow-3xs border border-slate-200/80 overflow-hidden">
-                {/* Stats header inside the table */}
-                <div className="p-4 bg-slate-50/60 border-b border-slate-200/80 flex flex-col sm:flex-row justify-between items-center gap-3">
+                {/* Stats & Actions header inside the list */}
+                <div className="p-3.5 sm:p-4 bg-slate-50/70 border-b border-slate-100 flex flex-wrap justify-between items-center gap-3" dir="rtl">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-slate-700">
                       عدد طلاب هذا الفصل: <span className="text-indigo-600 font-black">{students.filter(s => s.classId === selectedClassId).length}</span>
@@ -3847,24 +3893,55 @@ export default function AdminPanel({
                     )}
                   </div>
 
-                  {selectedStudentIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelectedStudents}
-                      disabled={submitting.deleteSelectedStudents}
-                      className="bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-md transform hover:scale-[1.02] active:scale-95 cursor-pointer"
-                    >
-                      {submitting.deleteSelectedStudents ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5 animate-bounce" />
-                      )}
-                      <span>حذف الطلاب المحددين ({selectedStudentIds.length})</span>
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {selectedStudentIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteSelectedStudents}
+                        disabled={submitting.deleteSelectedStudents}
+                        className="bg-rose-500 hover:bg-rose-600 disabled:bg-slate-300 text-white px-3.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        {submitting.deleteSelectedStudents ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5 animate-bounce" />
+                        )}
+                        <span>حذف الطلاب المحددين ({selectedStudentIds.length})</span>
+                      </button>
+                    )}
+
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer select-none bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-3xs hover:border-slate-300 transition">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                        checked={
+                          students.filter(s => s.classId === selectedClassId).filter(s => {
+                            const term = studentSearchQuery.trim().toLowerCase();
+                            return !term || s.name.toLowerCase().includes(term);
+                          }).length > 0 &&
+                          students.filter(s => s.classId === selectedClassId).filter(s => {
+                            const term = studentSearchQuery.trim().toLowerCase();
+                            return !term || s.name.toLowerCase().includes(term);
+                          }).every(st => selectedStudentIds.includes(st.id))
+                        }
+                        onChange={(e) => {
+                          const classFiltered = students.filter(s => s.classId === selectedClassId).filter(s => {
+                            const term = studentSearchQuery.trim().toLowerCase();
+                            return !term || s.name.toLowerCase().includes(term);
+                          });
+                          if (e.target.checked) {
+                            setSelectedStudentIds(classFiltered.map(st => st.id));
+                          } else {
+                            setSelectedStudentIds([]);
+                          }
+                        }}
+                      />
+                      <span>تحديد الكل</span>
+                    </label>
+                  </div>
                 </div>
 
-                {/* Table implementation */}
+                {/* List implementation */}
                 {(() => {
                   const classStudents = students.filter(s => s.classId === selectedClassId);
                   const filteredClassStudents = classStudents.filter(s => {
@@ -3875,7 +3952,7 @@ export default function AdminPanel({
 
                   if (classStudents.length === 0) {
                     return (
-                      <div className="text-center py-16 space-y-3">
+                      <div className="text-center py-16 space-y-3" dir="rtl">
                         <p className="text-xs text-slate-400 font-bold">لا يوجد طلاب مسجلين في هذا الفصل حالياً.</p>
                         <button
                           type="button"
@@ -3890,90 +3967,66 @@ export default function AdminPanel({
 
                   if (filteredClassStudents.length === 0) {
                     return (
-                      <div className="text-center py-12">
+                      <div className="text-center py-12" dir="rtl">
                         <p className="text-xs text-slate-400 font-bold">لا يوجد طلاب يطابقون كلمة البحث في هذا الفصل.</p>
                       </div>
                     );
                   }
 
-                  const allFilteredSelected = filteredClassStudents.length > 0 && filteredClassStudents.every(st => selectedStudentIds.includes(st.id));
-
                   return (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-right border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-50/90 text-slate-700 font-black border-b border-slate-200/80">
-                            <th className="py-3.5 px-4 w-12 text-center border-l border-slate-200/50">#</th>
-                            <th className="py-3.5 px-4 border-l border-slate-200/50">اسم الطالب</th>
-                            <th className="py-3.5 px-4 w-28 text-center border-l border-slate-200/50">الصف</th>
-                            <th className="py-3.5 px-4 w-28 text-center border-l border-slate-200/50">الفصل</th>
-                            <th className="py-3.5 px-4 w-24 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <input 
-                                  type="checkbox" 
-                                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
-                                  checked={allFilteredSelected}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedStudentIds(filteredClassStudents.map(st => st.id));
-                                    } else {
-                                      setSelectedStudentIds([]);
-                                    }
-                                  }}
-                                  title="تحديد الكل للحذف"
-                                />
-                                <span>التحكم</span>
-                              </div>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                          {filteredClassStudents.map((st, idx) => {
-                            const studentGrade = grades.find(g => g.id === st.gradeId)?.name || "غير محدد";
-                            const studentClass = classes.find(c => c.id === st.classId)?.name || "غير محدد";
-                            const isSelected = selectedStudentIds.includes(st.id);
+                    <div className="divide-y divide-slate-100" dir="rtl">
+                      {filteredClassStudents.map((st, idx) => {
+                        const isSelected = selectedStudentIds.includes(st.id);
 
-                            return (
-                              <tr key={`st-row-${st.id}-${idx}`} className={`transition ${isSelected ? 'bg-indigo-50/30 hover:bg-indigo-50/50' : 'hover:bg-slate-50/50'}`}>
-                                <td className="py-3 px-4 text-center text-slate-400 font-bold border-l border-slate-100">{idx + 1}</td>
-                                <td className="py-3 px-4 font-black text-slate-900 text-sm border-l border-slate-100">{st.name}</td>
-                                <td className="py-3 px-4 text-center text-slate-500 font-bold border-l border-slate-100">{studentGrade}</td>
-                                <td className="py-3 px-4 text-center text-slate-500 font-bold border-l border-slate-100">{studentClass}</td>
-                                <td className="py-3 px-4 text-center">
-                                  <div className="flex items-center justify-center gap-3">
-                                    <input 
-                                      type="checkbox" 
-                                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
-                                      checked={isSelected}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setSelectedStudentIds(prev => [...prev, st.id]);
-                                        } else {
-                                          setSelectedStudentIds(prev => prev.filter(id => id !== st.id));
-                                        }
-                                      }}
-                                      title="تحديد الطالب للحذف"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteStudent(st.id, st.name)}
-                                      disabled={submitting['deleteStudent_' + st.id]}
-                                      className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                                      title="حذف الطالب"
-                                    >
-                                      {submitting['deleteStudent_' + st.id] ? (
-                                        <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
-                                      ) : (
-                                        <Trash2 className="w-4 h-4" />
-                                      )}
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                        return (
+                          <div 
+                            key={`st-row-${st.id}-${idx}`} 
+                            className={`py-3.5 px-4 sm:px-6 flex items-center justify-between gap-4 transition-colors ${
+                              isSelected ? 'bg-indigo-50/40' : 'hover:bg-slate-50/60 bg-white'
+                            }`}
+                          >
+                            {/* Number circle badge on the right + Student Name */}
+                            <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+                              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#f0f4f9] text-[#475569] font-bold text-xs sm:text-sm flex items-center justify-center shrink-0 shadow-3xs">
+                                {idx + 1}
+                              </div>
+                              <span className="text-sm sm:text-base font-bold text-[#0f172a] truncate">
+                                {st.name}
+                              </span>
+                            </div>
+
+                            {/* Control icons on the left */}
+                            <div className="flex items-center gap-2.5 shrink-0">
+                              <input 
+                                type="checkbox" 
+                                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedStudentIds(prev => [...prev, st.id]);
+                                  } else {
+                                    setSelectedStudentIds(prev => prev.filter(id => id !== st.id));
+                                  }
+                                }}
+                                title="تحديد الطالب للحذف"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteStudent(st.id, st.name)}
+                                disabled={submitting['deleteStudent_' + st.id]}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                                title="حذف الطالب"
+                              >
+                                {submitting['deleteStudent_' + st.id] ? (
+                                  <Loader2 className="w-4 h-4 animate-spin text-rose-500" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })()}

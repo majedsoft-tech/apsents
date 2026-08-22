@@ -23,21 +23,43 @@ export function setActiveUser(user: any) {
 }
 
 export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest?: boolean } {
-  const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  let ownerParam = urlParams?.get("owner");
-  if (!ownerParam && typeof window !== "undefined" && window.location.hash.includes("owner=")) {
-    const hashIndex = window.location.hash.indexOf("?");
-    if (hashIndex !== -1) {
+  let ownerParam: string | null = null;
+  let emailParam: string | null = null;
+
+  if (typeof window !== "undefined") {
+    const urlParams = new URLSearchParams(window.location.search);
+    ownerParam = urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid");
+    emailParam = urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail");
+
+    if (!ownerParam && window.location.hash.includes("?")) {
+      const hashIndex = window.location.hash.indexOf("?");
       const hashParams = new URLSearchParams(window.location.hash.substring(hashIndex));
-      ownerParam = hashParams.get("owner");
+      ownerParam = hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid");
+      if (!emailParam) {
+        emailParam = hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail");
+      }
     }
   }
 
-  if (ownerParam) {
-    const isOwnerMyself = firebaseAuth.currentUser && firebaseAuth.currentUser.uid === ownerParam;
+  if (ownerParam || emailParam) {
+    const isOwnerMyself = !!(firebaseAuth.currentUser && (
+      (ownerParam && firebaseAuth.currentUser.uid === ownerParam) ||
+      (emailParam && firebaseAuth.currentUser.email?.toLowerCase() === emailParam.toLowerCase())
+    ));
+
+    const resolvedEmail = emailParam 
+      ? decodeURIComponent(emailParam).toLowerCase() 
+      : (ownerParam && ownerParam.includes("@") 
+          ? decodeURIComponent(ownerParam).toLowerCase() 
+          : (isOwnerMyself ? (firebaseAuth.currentUser?.email?.toLowerCase() || `owner_${ownerParam}@school.com`) : `owner_${ownerParam}@school.com`));
+
+    const resolvedUid = ownerParam 
+      ? decodeURIComponent(ownerParam) 
+      : (emailParam ? `user_${decodeURIComponent(emailParam).replace(/[^a-zA-Z0-9]/g, '_')}` : (firebaseAuth.currentUser?.uid || "school_default"));
+
     return {
-      uid: ownerParam,
-      email: isOwnerMyself ? (firebaseAuth.currentUser?.email?.toLowerCase() || `owner_${ownerParam}@school.com`) : `owner_${ownerParam}@school.com`,
+      uid: resolvedUid,
+      email: resolvedEmail,
       isGuest: !isOwnerMyself
     };
   }
@@ -120,6 +142,10 @@ function getLocalItems(colName: string): any[] {
   }
 }
 
+export function getLocalCollection<T = any>(colName: string): T[] {
+  return getLocalItems(colName) as T[];
+}
+
 function setLocalItems(colName: string, items: any[]) {
   if (typeof window === "undefined") return;
   try {
@@ -157,32 +183,96 @@ function generateLocalId(prefix: string = "id"): string {
 // Helper to check if a document belongs to a specific user/school (strict multi-tenant isolation)
 export function isDocBelongingToUser(data: any, currentUid: string, currentEmail: string): boolean {
   if (!data) return false;
-  const docUid = data.userId ? String(data.userId).trim() : "";
+  const docUid = data.userId ? String(data.userId).trim().toLowerCase() : "";
   const docEmail = data.userEmail ? String(data.userEmail).trim().toLowerCase() : "";
-  const cUid = currentUid ? String(currentUid).trim() : "";
+  const cUid = currentUid ? String(currentUid).trim().toLowerCase() : "";
   const cEmail = currentEmail ? String(currentEmail).trim().toLowerCase() : "";
 
-  // 1. Primary Email Match: If both have an email and they match, it belongs to the school account!
+  // 1. Primary UID Match
+  if (docUid && cUid && docUid === cUid) {
+    return true;
+  }
+
+  // 2. Primary Email Match
   if (docEmail && cEmail && docEmail === cEmail) {
     return true;
   }
 
-  // 2. Primary UID Match: If document has a userId, and it matches currentUid
-  if (docUid && cUid && (docUid === cUid || docUid.toLowerCase() === cUid.toLowerCase())) {
+  // 3. Email/UID Cross Match (e.g., owner param was UID but doc has Email, or owner param was Email but doc has UID)
+  if (docEmail && cUid && (docEmail === cUid || docEmail.includes(cUid) || cUid.includes(docEmail))) {
     return true;
   }
 
-  // 3. Fallback if currentUid is formatted as an email (e.g. owner=school@mail.com)
-  if (docEmail && cUid && cUid.includes("@") && docEmail === cUid.toLowerCase()) {
+  if (docUid && cEmail && (docUid === cEmail || docUid.includes(cEmail) || cEmail.includes(docUid))) {
     return true;
   }
 
-  // 4. Fallback if docUid is an email string matching currentEmail
-  if (docUid && cEmail && docUid.includes("@") && docUid.toLowerCase() === cEmail) {
-    return true;
+  // 4. Check URL parameters directly in case state is in transition
+  if (typeof window !== "undefined") {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlOwner = (urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid") || "").trim().toLowerCase();
+    const urlEmail = (urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail") || "").trim().toLowerCase();
+
+    if (urlOwner && (docUid === urlOwner || docEmail === urlOwner || docEmail.includes(urlOwner) || docUid.includes(urlOwner))) {
+      return true;
+    }
+    if (urlEmail && (docEmail === urlEmail || docUid === urlEmail || docEmail.includes(urlEmail))) {
+      return true;
+    }
   }
 
   return false;
+}
+
+// Helper to fully synchronize all local cached records to Firestore
+export async function syncAllLocalDataToFirestore(): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+  if (!uid) return;
+
+  const collections = [
+    GRADES_COLL,
+    CLASSES_COLL,
+    TEACHERS_COLL,
+    STUDENTS_COLL,
+    ATTENDANCE_COLL,
+    BEHAVIORS_COLL,
+    MORNING_DELAYS_COLL
+  ];
+
+  try {
+    for (const colName of collections) {
+      const items = getLocalItems(colName);
+      if (items.length === 0) continue;
+      
+      const chunkSize = 400;
+      for (let i = 0; i < items.length; i += chunkSize) {
+        const chunk = items.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+        chunk.forEach(item => {
+          if (!item || !item.id) return;
+          const docRef = doc(db, colName, item.id);
+          batch.set(docRef, {
+            ...item,
+            userId: item.userId || uid,
+            userEmail: item.userEmail || email,
+            updatedAt: Date.now()
+          }, { merge: true });
+        });
+        await batch.commit().catch(() => {});
+      }
+    }
+
+    const storedName = typeof window !== "undefined" 
+      ? (localStorage.getItem(`school_name_${uid}`) || (email ? localStorage.getItem(`school_name_${email}`) : null)) 
+      : null;
+    if (storedName) {
+      await saveSchoolName(storedName);
+    }
+  } catch (err) {
+    console.error("Error syncing all local data to Firestore:", err);
+  }
 }
 
 // Helper to fetch entire collection and filter client-side based on strict multi-tenant user isolation
@@ -213,16 +303,14 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
         results.push(localItem);
         seenIds.add(localItem.id);
 
-        // Background push un-synced local items to Firestore so other devices/domains get them immediately!
-        if (currentEmail && currentEmail.includes("@") && !currentEmail.includes("@school.com")) {
-          const toUpload = {
-            ...localItem,
-            userId: currentUid,
-            userEmail: currentEmail,
-            updatedAt: Date.now()
-          };
-          setDoc(doc(db, colName, localItem.id), toUpload, { merge: true }).catch(() => {});
-        }
+        // Always push un-synced local items to Firestore so other devices/domains get them immediately!
+        const toUpload = {
+          ...localItem,
+          userId: localItem.userId || currentUid,
+          userEmail: localItem.userEmail || currentEmail,
+          updatedAt: Date.now()
+        };
+        setDoc(doc(db, colName, localItem.id), toUpload, { merge: true }).catch(() => {});
       }
     });
 
@@ -687,23 +775,25 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
   });
 
   if (toCreate.length > 0) {
-    (async () => {
-      try {
+    try {
+      const chunkSize = 400;
+      for (let i = 0; i < toCreate.length; i += chunkSize) {
+        const chunk = toCreate.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         const now = Date.now();
-        toCreate.forEach((item, idx) => {
+        chunk.forEach((item, idx) => {
           const docRef = doc(db, GRADES_COLL, item.id);
           batch.set(docRef, {
             id: item.id,
             name: item.name,
             userId: uid,
             userEmail: email,
-            createdAt: now + idx
+            createdAt: now + i + idx
           });
         });
         await batch.commit();
-      } catch (err: any) {}
-    })();
+      }
+    } catch (err: any) {}
   }
 
   return results;
@@ -822,11 +912,13 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
   });
 
   if (toCreate.length > 0) {
-    (async () => {
-      try {
+    try {
+      const chunkSize = 400;
+      for (let i = 0; i < toCreate.length; i += chunkSize) {
+        const chunk = toCreate.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         const now = Date.now();
-        toCreate.forEach((c, idx) => {
+        chunk.forEach((c, idx) => {
           const docRef = doc(db, CLASSES_COLL, c.id);
           batch.set(docRef, {
             id: c.id,
@@ -834,12 +926,12 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
             gradeId: c.gradeId,
             userId: uid,
             userEmail: email,
-            createdAt: now + idx
+            createdAt: now + i + idx
           });
         });
         await batch.commit();
-      } catch (err: any) {}
-    })();
+      }
+    } catch (err: any) {}
   }
 
   return results;
@@ -893,15 +985,15 @@ export async function addTeacher(name: string): Promise<string> {
 }
 
 // Add Multiple Teachers in a Batch
-export async function addTeachersBatch(names: string[]): Promise<void> {
+export async function addTeachersBatch(names: string[]): Promise<Teacher[]> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
 
-  const toCreate: { id: string; name: string }[] = [];
+  const toCreate: Teacher[] = [];
   names.forEach(name => {
     const generatedId = generateLocalId("tch");
-    const item = { id: generatedId, name: name.trim() };
+    const item: Teacher = { id: generatedId, name: name.trim() };
     toCreate.push(item);
     saveOrUpdateLocalItem(TEACHERS_COLL, {
       id: generatedId,
@@ -913,24 +1005,28 @@ export async function addTeachersBatch(names: string[]): Promise<void> {
   });
 
   if (toCreate.length > 0) {
-    (async () => {
-      try {
+    try {
+      const chunkSize = 400;
+      for (let i = 0; i < toCreate.length; i += chunkSize) {
+        const chunk = toCreate.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         const now = Date.now();
-        toCreate.forEach((t, idx) => {
+        chunk.forEach((t, idx) => {
           const docRef = doc(db, TEACHERS_COLL, t.id);
           batch.set(docRef, { 
             id: t.id,
             name: t.name, 
             userId: uid,
             userEmail: email,
-            createdAt: now + idx
+            createdAt: now + i + idx
           });
         });
         await batch.commit();
-      } catch (err: any) {}
-    })();
+      }
+    } catch (err: any) {}
   }
+
+  return toCreate;
 }
 
 // Delete Teacher
@@ -1015,7 +1111,7 @@ export async function addStudent(name: string, gradeId: string, classId: string)
 }
 
 // Add Multiple Students in a Batch (Ignores duplicates, adds non-duplicates)
-export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<void> {
+export async function addStudentsBatch(studentsList: { name: string, gradeId: string, classId: string }[]): Promise<Student[]> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
@@ -1035,7 +1131,7 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
     seenClassAndNames.add(`${s.classId}:::${sNorm}`);
   });
 
-  const toCreate: { id: string; name: string; gradeId: string; classId: string }[] = [];
+  const toCreate: Student[] = [];
   studentsList.forEach(s => {
     const trimmed = s.name.trim();
     if (!trimmed) return;
@@ -1056,7 +1152,7 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
 
     seenClassAndNames.add(key);
     const generatedId = generateLocalId("stu");
-    const item = { id: generatedId, name: trimmed, gradeId: s.gradeId, classId: s.classId };
+    const item: Student = { id: generatedId, name: trimmed, gradeId: s.gradeId, classId: s.classId };
     toCreate.push(item);
     saveOrUpdateLocalItem(STUDENTS_COLL, {
       id: generatedId,
@@ -1070,11 +1166,13 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
   });
 
   if (toCreate.length > 0) {
-    (async () => {
-      try {
+    try {
+      const chunkSize = 400;
+      for (let i = 0; i < toCreate.length; i += chunkSize) {
+        const chunk = toCreate.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         const now = Date.now();
-        toCreate.forEach((s, idx) => {
+        chunk.forEach((s, idx) => {
           const docRef = doc(db, STUDENTS_COLL, s.id);
           batch.set(docRef, { 
             id: s.id,
@@ -1083,13 +1181,15 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
             classId: s.classId, 
             userId: uid,
             userEmail: email,
-            createdAt: now + idx
+            createdAt: now + i + idx
           });
         });
         await batch.commit();
-      } catch (err: any) {}
-    })();
+      }
+    } catch (err: any) {}
   }
+
+  return toCreate;
 }
 
 // Delete Student
@@ -1235,15 +1335,13 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
           results.push(l);
           seenIds.add(l.id);
 
-          if (currentEmail && currentEmail.includes("@") && !currentEmail.includes("@school.com")) {
-            const toUpload = {
-              ...l,
-              userId: currentUid,
-              userEmail: currentEmail,
-              updatedAt: Date.now()
-            };
-            setDoc(doc(db, colName, l.id), toUpload, { merge: true }).catch(() => {});
-          }
+          const toUpload = {
+            ...l,
+            userId: l.userId || currentUid,
+            userEmail: l.userEmail || currentEmail,
+            updatedAt: Date.now()
+          };
+          setDoc(doc(db, colName, l.id), toUpload, { merge: true }).catch(() => {});
         }
       });
       setLocalItems(colName, results);

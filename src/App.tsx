@@ -13,7 +13,8 @@ import {
   subscribeToStudents,
   subscribeToSchoolName,
   registerUserInDb,
-  setActiveUser
+  setActiveUser,
+  syncAllLocalDataToFirestore
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -227,31 +228,32 @@ export default function App() {
     const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
 
     const pageParam = searchParams.get("page") || hashParams?.get("page") || "";
-    const ownerParam = searchParams.get("owner") || hashParams?.get("owner") || "";
-    const path = window.location.pathname.toLowerCase();
-    const hash = window.location.hash.toLowerCase();
+    const ownerParam = searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "";
+    const emailParam = searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "";
+    const schoolParam = searchParams.get("school") || searchParams.get("schoolName") || hashParams?.get("school") || hashParams?.get("schoolName") || "";
 
-    const isPublicRoute = 
-      pageParam === "teacher" || 
-      pageParam === "stats-only" || 
-      pageParam === "morning-delay" ||
-      path.includes("teacher") || 
-      path.includes("stats-only") || 
-      path.includes("morning-delay") ||
-      hash.includes("teacher") || 
-      hash.includes("stats-only") ||
-      hash.includes("morning-delay") ||
-      appMode === "teacher" || 
-      appMode === "stats-only" ||
-      appMode === "morning-delay";
+    if (schoolParam) {
+      const decodedSchool = decodeURIComponent(schoolParam);
+      setSchoolName(decodedSchool);
+    }
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (ownerParam) {
+      if (ownerParam || emailParam) {
+        const decodedOwner = ownerParam ? decodeURIComponent(ownerParam) : "";
+        const decodedEmail = emailParam ? decodeURIComponent(emailParam).toLowerCase() : "";
+
+        const effEmail = decodedEmail 
+          ? decodedEmail 
+          : (decodedOwner.includes("@") ? decodedOwner.toLowerCase() : (user?.email?.toLowerCase() || `owner_${decodedOwner}@school.com`));
+        const effUid = decodedOwner 
+          ? decodedOwner 
+          : (decodedEmail ? `user_${decodedEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : (user?.uid || "school_default"));
+
         const guestUser = {
-          uid: ownerParam,
-          email: `owner_${ownerParam}@school.com`,
-          displayName: user?.uid === ownerParam ? (user.displayName || "مدير المدرسة") : "زائر (مباشر)",
-          isGuest: user?.uid !== ownerParam
+          uid: effUid,
+          email: effEmail,
+          displayName: schoolParam ? decodeURIComponent(schoolParam) : (user?.uid === effUid ? (user?.displayName || "مدير المدرسة") : "زائر (مباشر)"),
+          isGuest: user?.uid !== effUid
         };
         setCurrentUser(guestUser);
         setActiveUser(guestUser);
@@ -288,6 +290,33 @@ export default function App() {
     }
   }, [currentUser, schoolName]);
 
+  const getNumberFromName = (name: string): number => {
+    const match = name.match(/\d+/);
+    return match ? parseInt(match[0], 10) : 999999;
+  };
+
+  const deduplicateById = <T extends { id: string }>(arr: T[]): T[] => {
+    const seen = new Set<string>();
+    return arr.filter(item => {
+      if (!item.id || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  };
+
+  const deduplicateClasses = (arr: Class[]): Class[] => {
+    const seenIds = new Set<string>();
+    const seenGradeName = new Set<string>();
+    return arr.filter(c => {
+      if (!c || !c.id || seenIds.has(c.id)) return false;
+      const key = `${c.gradeId}_${c.name?.trim()}`;
+      if (seenGradeName.has(key)) return false;
+      seenIds.add(c.id);
+      seenGradeName.add(key);
+      return true;
+    });
+  };
+
   useEffect(() => {
     if (!currentUser) {
       setGrades([]);
@@ -320,33 +349,6 @@ export default function App() {
     let unsubTeachers: (() => void) | null = null;
     let unsubStudents: (() => void) | null = null;
     let active = true;
-
-    const getNumberFromName = (name: string): number => {
-      const match = name.match(/\d+/);
-      return match ? parseInt(match[0], 10) : 999999;
-    };
-
-    const deduplicateById = <T extends { id: string }>(arr: T[]): T[] => {
-      const seen = new Set<string>();
-      return arr.filter(item => {
-        if (!item.id || seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      });
-    };
-
-    const deduplicateClasses = (arr: Class[]): Class[] => {
-      const seenIds = new Set<string>();
-      const seenGradeName = new Set<string>();
-      return arr.filter(c => {
-        if (!c || !c.id || seenIds.has(c.id)) return false;
-        const key = `${c.gradeId}_${c.name?.trim()}`;
-        if (seenGradeName.has(key)) return false;
-        seenIds.add(c.id);
-        seenGradeName.add(key);
-        return true;
-      });
-    };
 
     const initialize = async () => {
       try {
@@ -460,39 +462,123 @@ export default function App() {
   }, [currentUser]);
 
   const handleRefreshData = async () => {
-    // Data is already fully real-time through firestore live-subscriptions!
+    try {
+      const [g, c, t, s, sn] = await Promise.all([
+        getGrades(),
+        getClasses(),
+        getTeachers(),
+        getStudents(),
+        getSchoolName()
+      ]);
+      if (sn) setSchoolName(sn);
+      const sortedGrades = deduplicateById([...g]).sort((a, b) => {
+        const timeA = (a as any).createdAt || 0;
+        const timeB = (b as any).createdAt || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return a.name.localeCompare(b.name, "ar");
+      });
+      setGrades(sortedGrades);
+
+      const sortedClasses = deduplicateClasses([...c]).sort((a, b) => {
+        const numA = getNumberFromName(a.name);
+        const numB = getNumberFromName(b.name);
+        if (numA !== numB) return numA - numB;
+        return a.name.localeCompare(b.name, "ar");
+      });
+      setClasses(sortedClasses);
+
+      const sortedTeachers = deduplicateById([...t]).sort((a, b) => a.name.localeCompare(b.name, "ar"));
+      setTeachers(sortedTeachers);
+
+      setStudents(deduplicateById(s));
+    } catch (err) {
+      console.error("Error refreshing data:", err);
+    }
+  };
+
+  const buildSharedUrl = (pageValue: string, extraParams: string = "") => {
+    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
+    const ownerEmail = currentUser?.email || auth.currentUser?.email || "";
+    
+    let query = `page=${pageValue}`;
+    if (extraParams) query += `&${extraParams}`;
+    if (ownerId) query += `&owner=${encodeURIComponent(ownerId)}`;
+    if (ownerEmail && !ownerEmail.endsWith("@school.com")) query += `&email=${encodeURIComponent(ownerEmail)}`;
+    if (schoolName) query += `&school=${encodeURIComponent(schoolName)}`;
+
+    return `${window.location.origin}${window.location.pathname}?${query}`;
+  };
+
+  // Robust clipboard copy function with textarea fallback for iframes and permissions
+  const copyTextToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {
+      console.warn("navigator.clipboard failed, attempting fallback:", e);
+    }
+
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-999999px";
+      textArea.style.top = "-999999px";
+      textArea.style.opacity = "0";
+      textArea.setAttribute("readonly", "");
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      return successful;
+    } catch (err) {
+      console.error("Fallback execCommand failed:", err);
+      return false;
+    }
   };
 
   const handleCopyStatsLink = () => {
-    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
-    const statsLink = `${window.location.origin}${window.location.pathname}?page=stats-only${ownerId ? `&owner=${ownerId}` : ""}`;
-    navigator.clipboard.writeText(statsLink).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch((err) => {
-      console.error("Failed to copy link: ", err);
+    // 1. Synchronize in background (non-blocking)
+    syncAllLocalDataToFirestore().catch(() => {});
+    
+    // 2. Perform copy immediately in user interaction thread
+    const statsLink = buildSharedUrl("stats-only");
+    copyTextToClipboard(statsLink).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
     });
   };
 
   const handleCopyTeacherLink = () => {
-    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
-    const teacherLink = `${window.location.origin}${window.location.pathname}?page=teacher&tab=attendance${ownerId ? `&owner=${ownerId}` : ""}`;
-    navigator.clipboard.writeText(teacherLink).then(() => {
-      setTeacherCopied(true);
-      setTimeout(() => setTeacherCopied(false), 2000);
-    }).catch((err) => {
-      console.error("Failed to copy link: ", err);
+    // 1. Synchronize in background (non-blocking)
+    syncAllLocalDataToFirestore().catch(() => {});
+    
+    // 2. Perform copy immediately in user interaction thread
+    const teacherLink = buildSharedUrl("teacher", "tab=attendance");
+    copyTextToClipboard(teacherLink).then((ok) => {
+      if (ok) {
+        setTeacherCopied(true);
+        setTimeout(() => setTeacherCopied(false), 2000);
+      }
     });
   };
 
   const handleCopyMorningDelayLink = () => {
-    const ownerId = currentUser?.uid || auth.currentUser?.uid || localStorage.getItem("own_school_admin_id") || getOrCreateOwnSchoolAdminId();
-    const delayLink = `${window.location.origin}${window.location.pathname}?page=morning-delay${ownerId ? `&owner=${ownerId}` : ""}`;
-    navigator.clipboard.writeText(delayLink).then(() => {
-      setMorningDelayCopied(true);
-      setTimeout(() => setMorningDelayCopied(false), 2000);
-    }).catch((err) => {
-      console.error("Failed to copy link: ", err);
+    // 1. Synchronize in background (non-blocking)
+    syncAllLocalDataToFirestore().catch(() => {});
+    
+    // 2. Perform copy immediately in user interaction thread
+    const delayLink = buildSharedUrl("morning-delay");
+    copyTextToClipboard(delayLink).then((ok) => {
+      if (ok) {
+        setMorningDelayCopied(true);
+        setTimeout(() => setMorningDelayCopied(false), 2000);
+      }
     });
   };
 
