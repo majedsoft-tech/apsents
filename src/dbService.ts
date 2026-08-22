@@ -128,52 +128,57 @@ const SETTINGS_COLL = "settings";
 const USERS_COLL = "registered_users";
 
 // --- ROBUST LOCAL CACHE & SYNC ENGINE ---
-function getLocalStorageKey(colName: string): string {
-  return `school_offline_cache_${colName}`;
+function getLocalStorageKey(colName: string, uid?: string): string {
+  const currentUid = uid || getEffectiveUidAndEmail().uid;
+  return `school_offline_cache_${currentUid || "default"}_${colName}`;
 }
 
-function getLocalItems(colName: string): any[] {
+function getLocalItems(colName: string, uid?: string): any[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(getLocalStorageKey(colName));
-    return raw ? JSON.parse(raw) : [];
+    const raw = localStorage.getItem(getLocalStorageKey(colName, uid));
+    if (raw) return JSON.parse(raw);
+    
+    // Fallback check for legacy un-scoped cache key
+    const legacyRaw = localStorage.getItem(`school_offline_cache_${colName}`);
+    return legacyRaw ? JSON.parse(legacyRaw) : [];
   } catch (e) {
     return [];
   }
 }
 
-export function getLocalCollection<T = any>(colName: string): T[] {
-  return getLocalItems(colName) as T[];
+export function getLocalCollection<T = any>(colName: string, uid?: string): T[] {
+  return getLocalItems(colName, uid) as T[];
 }
 
-function setLocalItems(colName: string, items: any[]) {
+function setLocalItems(colName: string, items: any[], uid?: string) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(getLocalStorageKey(colName), JSON.stringify(items));
+    localStorage.setItem(getLocalStorageKey(colName, uid), JSON.stringify(items));
   } catch (e) {}
 }
 
-function saveOrUpdateLocalItem(colName: string, item: any) {
-  const items = getLocalItems(colName);
+function saveOrUpdateLocalItem(colName: string, item: any, uid?: string) {
+  const items = getLocalItems(colName, uid);
   const idx = items.findIndex(i => i.id === item.id);
   if (idx >= 0) {
     items[idx] = { ...items[idx], ...item };
   } else {
     items.push(item);
   }
-  setLocalItems(colName, items);
+  setLocalItems(colName, items, uid);
 }
 
-function removeLocalItem(colName: string, id: string) {
-  const items = getLocalItems(colName);
+function removeLocalItem(colName: string, id: string, uid?: string) {
+  const items = getLocalItems(colName, uid);
   const filtered = items.filter(i => i.id !== id);
-  setLocalItems(colName, filtered);
+  setLocalItems(colName, filtered, uid);
 }
 
-function removeLocalItemsBy(colName: string, predicate: (item: any) => boolean) {
-  const items = getLocalItems(colName);
+function removeLocalItemsBy(colName: string, predicate: (item: any) => boolean, uid?: string) {
+  const items = getLocalItems(colName, uid);
   const filtered = items.filter(i => !predicate(i));
-  setLocalItems(colName, filtered);
+  setLocalItems(colName, filtered, uid);
 }
 
 function generateLocalId(prefix: string = "id"): string {
@@ -216,12 +221,53 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     if (urlOwner && (docUid === urlOwner || docEmail === urlOwner || docEmail.includes(urlOwner) || docUid.includes(urlOwner))) {
       return true;
     }
-    if (urlEmail && (docEmail === urlEmail || docUid === urlEmail || docEmail.includes(urlEmail))) {
+    if (urlEmail && (docEmail === urlEmail || docUid === urlEmail || docEmail.includes(urlEmail) || docUid.includes(urlEmail))) {
       return true;
     }
   }
 
+  // 5. If doc has matching school owner id prefix
+  if (cUid.startsWith("school_") && (docUid === cUid || docEmail.includes(cUid))) {
+    return true;
+  }
+
   return false;
+}
+
+// Migrate guest records in Firestore to an authenticated user upon Google login
+export async function migrateGuestDataToUser(guestUid: string, userUid: string, userEmail: string): Promise<void> {
+  if (!guestUid || !userUid || guestUid === userUid) return;
+  
+  const collections = [
+    GRADES_COLL,
+    CLASSES_COLL,
+    TEACHERS_COLL,
+    STUDENTS_COLL,
+    ATTENDANCE_COLL,
+    BEHAVIORS_COLL,
+    MORNING_DELAYS_COLL,
+    SETTINGS_COLL
+  ];
+
+  try {
+    for (const colName of collections) {
+      const q = query(collection(db, colName), where("userId", "==", guestUid));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach(d => {
+          batch.set(doc(db, colName, d.id), {
+            userId: userUid,
+            userEmail: userEmail,
+            updatedAt: Date.now()
+          }, { merge: true });
+        });
+        await batch.commit();
+      }
+    }
+  } catch (err) {
+    console.warn("Notice during guest data migration:", err);
+  }
 }
 
 // Helper to fully synchronize all local cached records to Firestore
@@ -243,7 +289,7 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
 
   try {
     for (const colName of collections) {
-      const items = getLocalItems(colName);
+      const items = getLocalItems(colName, uid).filter(item => isDocBelongingToUser(item, uid, email));
       if (items.length === 0) continue;
       
       const chunkSize = 400;
@@ -281,8 +327,8 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
   const currentUid = eff.uid;
   const currentEmail = eff.email?.toLowerCase() || "";
 
-  // Load from local storage cache first
-  const localList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  // Load from local storage cache first as fallback
+  const localList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
 
   try {
     const querySnapshot = await getDocs(collection(db, colName));
@@ -297,25 +343,8 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
       }
     });
 
-    // Auto-heal & merge any local items not yet in Firestore or from other sessions
-    localList.forEach(localItem => {
-      if (!seenIds.has(localItem.id)) {
-        results.push(localItem);
-        seenIds.add(localItem.id);
-
-        // Always push un-synced local items to Firestore so other devices/domains get them immediately!
-        const toUpload = {
-          ...localItem,
-          userId: localItem.userId || currentUid,
-          userEmail: localItem.userEmail || currentEmail,
-          updatedAt: Date.now()
-        };
-        setDoc(doc(db, colName, localItem.id), toUpload, { merge: true }).catch(() => {});
-      }
-    });
-
-    // Update local cache with latest full list
-    setLocalItems(colName, results);
+    // Update local cache with authoritative Firestore data
+    setLocalItems(colName, results, currentUid);
 
     return results;
   } catch (err: any) {
@@ -426,9 +455,9 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   const uid = eff.uid;
   const email = eff.email;
   
-  // Check if a record already exists for this slot
-  const existing = await getAttendanceRecord(record.date, record.period, record.gradeId, record.classId);
-  const recordId = existing?.id || generateLocalId("att");
+  // Deterministic clean ID per slot to prevent duplication and ensure 100% instant sync
+  const sanitizedPeriod = (record.period || "1").replace(/\s+/g, '_');
+  const recordId = `att_${uid}_${record.date}_${sanitizedPeriod}_${record.gradeId}_${record.classId}`;
 
   const fullRecord = {
     ...record,
@@ -439,29 +468,21 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   };
 
   // 1. Save to local storage cache immediately
-  saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord);
+  saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
-  // 2. Persist to Firestore
+  // 2. Persist to Firestore with merge
   try {
-    if (existing) {
-      const docRef = doc(db, ATTENDANCE_COLL, existing.id);
-      await setDoc(docRef, {
-        ...record,
-        userId: uid,
-        userEmail: email,
-        timestamp: serverTimestamp()
-      }, { merge: true });
-    } else {
-      const collRef = collection(db, ATTENDANCE_COLL);
-      await addDoc(collRef, {
-        ...record,
-        userId: uid,
-        userEmail: email,
-        timestamp: serverTimestamp()
-      });
-    }
+    const docRef = doc(db, ATTENDANCE_COLL, recordId);
+    await setDoc(docRef, {
+      ...record,
+      id: recordId,
+      userId: uid,
+      userEmail: email,
+      timestamp: Date.now(),
+      updatedAt: Date.now()
+    }, { merge: true });
   } catch (err: any) {
-    // Firestore error gracefully handled - local cache is already saved
+    // Firestore error handled gracefully
   }
 }
 
@@ -482,7 +503,7 @@ export function subscribeToBehaviorRecords(
   const currentUid = eff.uid;
   const currentEmail = eff.email;
 
-  const localList = getLocalItems(BEHAVIORS_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && item.studentId === studentId);
+  const localList = getLocalItems(BEHAVIORS_COLL, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && item.studentId === studentId);
   localList.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   callback(localList);
 
@@ -499,6 +520,7 @@ export function subscribeToBehaviorRecords(
         }
       });
       records.sort((a, b) => b.date.localeCompare(a.date));
+      setLocalItems(BEHAVIORS_COLL, records, currentUid);
       callback(records);
     }, (err) => {
       if (onError) onError(err);
@@ -523,17 +545,19 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
     timestamp: Date.now()
   };
 
-  saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord);
+  saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord, uid);
 
   try {
-    const collRef = collection(db, BEHAVIORS_COLL);
-    const docRef = await addDoc(collRef, {
+    const docRef = doc(db, BEHAVIORS_COLL, newId);
+    await setDoc(docRef, {
       ...record,
+      id: newId,
       userId: uid,
       userEmail: email,
-      timestamp: serverTimestamp()
-    });
-    return docRef.id;
+      timestamp: Date.now(),
+      updatedAt: Date.now()
+    }, { merge: true });
+    return newId;
   } catch (err) {
     return newId;
   }
@@ -541,7 +565,8 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
 
 // Delete Behavior Record
 export async function deleteBehaviorRecord(id: string): Promise<void> {
-  removeLocalItem(BEHAVIORS_COLL, id);
+  const eff = getEffectiveUidAndEmail();
+  removeLocalItem(BEHAVIORS_COLL, id, eff.uid);
   try {
     await deleteDoc(doc(db, BEHAVIORS_COLL, id));
   } catch (err) {}
@@ -1275,21 +1300,8 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
   }
 
   try {
-    const q = query(collection(db, SETTINGS_COLL), where("userId", "==", uid));
-    const querySnapshot = await getDocs(q);
-    if (!querySnapshot.empty) {
-      const docRef = doc(db, SETTINGS_COLL, querySnapshot.docs[0].id);
-      await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
-    } else {
-      const qEmail = query(collection(db, SETTINGS_COLL), where("userEmail", "==", email));
-      const emailSnapshot = await getDocs(qEmail);
-      if (!emailSnapshot.empty) {
-        const docRef = doc(db, SETTINGS_COLL, emailSnapshot.docs[0].id);
-        await setDoc(docRef, { schoolName, userId: uid, userEmail: email }, { merge: true });
-      } else {
-        await addDoc(collection(db, SETTINGS_COLL), { schoolName, userId: uid, userEmail: email });
-      }
-    }
+    const docRef = doc(db, SETTINGS_COLL, `settings_${uid}`);
+    await setDoc(docRef, { schoolName, userId: uid, userEmail: email, updatedAt: Date.now() }, { merge: true });
   } catch (err) {}
 }
 
@@ -1304,7 +1316,7 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
   const currentEmail = eff.email;
 
   // Immediately emit cached items so UI is instantly populated
-  const localList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  const localList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
   if (localList.length > 0) {
     callback(localList);
   }
@@ -1321,27 +1333,13 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
           results.push({ id: docSnap.id, ...data });
         }
       });
-      // Merge with any local cache items
-      const currentLocals = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
-      currentLocals.forEach(l => {
-        if (!seenIds.has(l.id)) {
-          results.push(l);
-          seenIds.add(l.id);
-
-          const toUpload = {
-            ...l,
-            userId: l.userId || currentUid,
-            userEmail: l.userEmail || currentEmail,
-            updatedAt: Date.now()
-          };
-          setDoc(doc(db, colName, l.id), toUpload, { merge: true }).catch(() => {});
-        }
-      });
-      setLocalItems(colName, results);
+      
+      // Update local storage cache with authoritative Firestore data
+      setLocalItems(colName, results, currentUid);
       callback(results);
     }, (error) => {
       // On permission or network error, fallback silently to local cache without crashing UI
-      const fallbackList = getLocalItems(colName).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+      const fallbackList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
       callback(fallbackList);
       if (onError) onError(error);
     });

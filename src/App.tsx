@@ -14,7 +14,8 @@ import {
   subscribeToSchoolName,
   registerUserInDb,
   setActiveUser,
-  syncAllLocalDataToFirestore
+  syncAllLocalDataToFirestore,
+  migrateGuestDataToUser
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -258,6 +259,10 @@ export default function App() {
         setCurrentUser(guestUser);
         setActiveUser(guestUser);
       } else if (user) {
+        const prevGuestId = localStorage.getItem("own_school_admin_id");
+        if (prevGuestId && prevGuestId !== user.uid) {
+          migrateGuestDataToUser(prevGuestId, user.uid, user.email?.toLowerCase() || "").catch(() => {});
+        }
         setCurrentUser(user);
         setActiveUser(user);
       } else {
