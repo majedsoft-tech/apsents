@@ -209,9 +209,8 @@ export default function MorningDelayPortal({
       });
   }, [students, studentSearchQuery, grades, classes, records]);
 
-  // Quick record handler for a student - Records exact real-time on click!
+  // Quick record handler for a student - Records exact real-time on click instantly!
   const handleRecordStudent = async (student: Student, overrideReason?: string) => {
-    setSavingStudentId(student.id);
     const gr = grades.find(g => g.id === student.gradeId);
     const cl = classes.find(c => c.id === student.classId);
     const finalReason = overrideReason || (selectedReason === "أخرى" ? (customReason || "أخرى") : selectedReason);
@@ -220,56 +219,64 @@ export default function MorningDelayPortal({
     const exactRecordTime = getCurrentTimeString();
     setArrivalTime(exactRecordTime);
 
-    try {
-      const recordPayload = {
-        studentId: student.id,
-        studentName: student.name,
-        gradeId: student.gradeId,
-        gradeName: gr?.name || "",
-        classId: student.classId,
-        className: cl?.name || "",
-        date: selectedDate,
-        arrivalTime: exactRecordTime,
-        delayMinutes: Number(delayMinutes) || 15,
-        reason: finalReason,
-        recordedBy: recorderName.trim() || "مشرف التأخر الصباحي",
-        notes: notes.trim()
-      };
+    const recordPayload = {
+      studentId: student.id,
+      studentName: student.name,
+      gradeId: student.gradeId,
+      gradeName: gr?.name || "",
+      classId: student.classId,
+      className: cl?.name || "",
+      date: selectedDate,
+      arrivalTime: exactRecordTime,
+      delayMinutes: Number(delayMinutes) || 15,
+      reason: finalReason,
+      recordedBy: recorderName.trim() || "مشرف التأخر الصباحي",
+      notes: notes.trim()
+    };
 
-      await saveMorningDelayRecord(recordPayload);
-      
-      setSaveToast(`تم تسجيل تأخر (${student.name}) في تمام الساعة ${exactRecordTime}`);
-      setTimeout(() => setSaveToast(null), 3000);
-      
-      // Clear quick notes if any
-      setNotes("");
+    // Optimistic instant UI update (0ms delay)
+    const tempId = "delay_" + student.id + "_" + Date.now();
+    const optimisticRecord: MorningDelayRecord = {
+      ...recordPayload,
+      id: tempId,
+      timestamp: Date.now()
+    };
+
+    setRecords(prev => {
+      const filtered = prev.filter(r => r.studentId !== student.id);
+      return [optimisticRecord, ...filtered];
+    });
+
+    setSaveToast(`تم تسجيل تأخر (${student.name}) - ${exactRecordTime}`);
+    setTimeout(() => setSaveToast(null), 2500);
+    setNotes("");
+
+    // Background persistent save
+    try {
+      const realId = await saveMorningDelayRecord(recordPayload);
+      if (realId && realId !== tempId) {
+        setRecords(prev => prev.map(r => r.id === tempId ? { ...r, id: realId } : r));
+      }
     } catch (err) {
       console.error("Error saving morning delay:", err);
-      alert("حدث خطأ أثناء حفظ سجل التأخر الصباحي");
-    } finally {
-      setSavingStudentId(null);
     }
   };
 
-  // Delete Record Handler
+  // Delete Record Handler with optimistic instant UI update
   const handleDeleteRecord = async (recordId: string, studentName?: string) => {
     if (!window.confirm(`هل أنت متأكد من حذف تسجيل تأخر الطالب ${studentName ? `"${studentName}"` : ""}؟`)) {
       return;
     }
+
+    // Optimistic instant remove from UI (0ms delay)
+    setRecords(prev => prev.filter(r => r.id !== recordId));
+    setSaveToast("تم حذف السجل بنجاح");
+    setTimeout(() => setSaveToast(null), 2000);
+
     try {
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: true, type: "delete", label: "جاري حذف السجل..." });
-      }
       await deleteMorningDelayRecord(recordId);
-      setSaveToast("تم حذف السجل بنجاح");
-      setTimeout(() => setSaveToast(null), 2500);
     } catch (err) {
       console.error("Error deleting morning delay:", err);
-      alert("حدث خطأ أثناء حذف السجل");
-    } finally {
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -453,8 +460,8 @@ export default function MorningDelayPortal({
               <UserCheck className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-black text-slate-800">إعدادات التسجيل والرصد الميداني</h2>
-              <p className="text-[11px] text-slate-400 font-semibold">اضبط وقت الحضور والسبب والمشرف ثم اختر الطالب للرصد الفوري</p>
+              <h2 className="text-sm font-black text-slate-800">رصد وتسجيل التأخر الصباحي</h2>
+              <p className="text-[11px] text-slate-400 font-semibold">اختر الفصل ثم اضغط على اسم الطالب للرصد المباشر والفوري</p>
             </div>
           </div>
 
@@ -487,89 +494,6 @@ export default function MorningDelayPortal({
             </button>
           </div>
         </div>
-
-        {/* Configuration Row: Supervisor Name + Arrival Time + Reason */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          
-          {/* 1. Recorder Name */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-700 flex items-center gap-1">
-              <User className="w-3.5 h-3.5 text-amber-600" />
-              <span>اسم المشرف / المناوب الصباحي:</span>
-            </label>
-            <input
-              type="text"
-              value={recorderName}
-              onChange={(e) => setRecorderName(e.target.value)}
-              placeholder="مثال: أ. محمد العتيبي"
-              className="w-full text-xs font-bold px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition"
-            />
-          </div>
-
-          {/* 2. Arrival Time & Quick Presets */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-700 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5 text-amber-600" />
-              <span>وقت الحضور:</span>
-            </label>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="time"
-                value={arrivalTime}
-                onChange={(e) => setArrivalTime(e.target.value)}
-                className="w-28 text-xs font-black px-2.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none text-center"
-              />
-              {/* Quick Preset buttons */}
-              <div className="flex items-center gap-1 flex-1 overflow-x-auto pb-0.5 scrollbar-none">
-                {TIME_PRESETS.slice(0, 4).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setArrivalTime(t)}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer shrink-0 ${
-                      arrivalTime === t
-                        ? "bg-amber-600 text-white border-amber-600"
-                        : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* 3. Reason for Tardiness */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-700 flex items-center gap-1">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-              <span>سبب التأخر:</span>
-            </label>
-            <select
-              value={selectedReason}
-              onChange={(e) => setSelectedReason(e.target.value)}
-              className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition cursor-pointer"
-            >
-              {COMMON_REASONS.map(r => (
-                <option key={r.id} value={r.label}>{r.label}</option>
-              ))}
-              <option value="أخرى">سبب مخصص آخر...</option>
-            </select>
-          </div>
-        </div>
-
-        {/* If Custom reason selected */}
-        {selectedReason === "أخرى" && (
-          <div className="pt-1">
-            <input
-              type="text"
-              value={customReason}
-              onChange={(e) => setCustomReason(e.target.value)}
-              placeholder="اكتب سبب التأخر المخصص هنا..."
-              className="w-full text-xs font-bold px-3.5 py-2 bg-amber-50/50 border border-amber-200 rounded-xl focus:bg-white focus:border-amber-500 outline-none"
-            />
-          </div>
-        )}
 
         {/* 3. INTERACTIVE REGISTRATION AREA */}
         

@@ -600,17 +600,18 @@ export function subscribeToMorningDelayRecords(
   }
 }
 
-// Save Morning Delay Record
+// Save Morning Delay Record (Ultra-fast instant write with local-first optimistic cache)
 export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
   const email = eff.email;
   
-  const existingRecords = await getMorningDelayRecords(record.date);
-  const existing = existingRecords.find(r => r.studentId === record.studentId);
+  // Instant lookup from local cache instead of slow network roundtrip
+  const localList = getLocalItems(MORNING_DELAYS_COLL);
+  const existing = localList.find(r => r.date === record.date && r.studentId === record.studentId && isDocBelongingToUser(r, uid, email));
   const recordId = existing?.id || generateLocalId("delay");
 
-  const fullRecord = {
+  const fullRecord: MorningDelayRecord = {
     ...record,
     id: recordId,
     userId: uid,
@@ -618,31 +619,23 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
     timestamp: Date.now()
   };
 
+  // 1. Instant local cache update (0ms)
   saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord);
 
-  try {
-    if (existing) {
-      const docRef = doc(db, MORNING_DELAYS_COLL, existing.id);
-      await setDoc(docRef, {
-        ...record,
-        userId: uid,
-        userEmail: email,
-        timestamp: serverTimestamp()
-      }, { merge: true });
-      return existing.id;
-    }
+  // 2. Background Firestore write
+  const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
+  setDoc(docRef, {
+    ...record,
+    id: recordId,
+    userId: uid,
+    userEmail: email,
+    timestamp: Date.now(),
+    updatedAt: Date.now()
+  }, { merge: true }).catch((err) => {
+    console.warn("Background Firestore delay save notice:", err);
+  });
 
-    const collRef = collection(db, MORNING_DELAYS_COLL);
-    const docRef = await addDoc(collRef, {
-      ...record,
-      userId: uid,
-      userEmail: email,
-      timestamp: serverTimestamp()
-    });
-    return docRef.id;
-  } catch (err) {
-    return recordId;
-  }
+  return recordId;
 }
 
 // Save Multiple Morning Delay Records in Batch

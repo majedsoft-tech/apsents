@@ -33,6 +33,8 @@ export interface AttendanceRecord {
   late?: string[];   // List of Student IDs
   isNoAbsence: boolean;
   timestamp: any;
+  userId?: string;
+  userEmail?: string;
 }
 
 export interface BehaviorRecord {
@@ -44,6 +46,8 @@ export interface BehaviorRecord {
   teacherName: string;
   violation: string;
   timestamp: any;
+  userId?: string;
+  userEmail?: string;
 }
 
 export interface MorningDelayRecord {
@@ -61,6 +65,8 @@ export interface MorningDelayRecord {
   recordedBy: string; // اسم المناوب / المشرف
   notes?: string;
   timestamp: any;
+  userId?: string;
+  userEmail?: string;
 }
 
 export interface RegisteredUser {
