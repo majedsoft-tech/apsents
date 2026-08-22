@@ -1,6 +1,7 @@
 import { 
   collection, 
   doc, 
+  getDoc,
   getDocs, 
   setDoc, 
   addDoc, 
@@ -18,44 +19,109 @@ import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, Morni
 // Active user proxy for unauthenticated direct links
 let activeUserProxy: any = null;
 
+// In-memory alias cache for UID <-> Email <-> School Name mappings
+const userProfileAliasCache = new Map<string, { uid: string; email: string; schoolName?: string }>();
+
 export function setActiveUser(user: any) {
   activeUserProxy = user;
+  if (user?.uid && user?.email) {
+    userProfileAliasCache.set(user.uid.toLowerCase(), { uid: user.uid, email: user.email.toLowerCase(), schoolName: user.displayName });
+    userProfileAliasCache.set(user.email.toLowerCase(), { uid: user.uid, email: user.email.toLowerCase(), schoolName: user.displayName });
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(`user_alias_${user.uid.toLowerCase()}`, JSON.stringify({ uid: user.uid, email: user.email.toLowerCase() }));
+        localStorage.setItem(`user_alias_${user.email.toLowerCase()}`, JSON.stringify({ uid: user.uid, email: user.email.toLowerCase() }));
+      } catch (e) {}
+    }
+  }
 }
 
+/**
+ * Resolves the effective UID and Email from URL parameters, Firebase auth, or active session.
+ */
 export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest?: boolean } {
   let ownerParam: string | null = null;
   let emailParam: string | null = null;
+  let schoolParam: string | null = null;
 
   if (typeof window !== "undefined") {
+    // 1. Check window.location.search
     const urlParams = new URLSearchParams(window.location.search);
     ownerParam = urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid");
     emailParam = urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail");
+    schoolParam = urlParams.get("school") || urlParams.get("schoolName");
 
-    if (!ownerParam && window.location.hash.includes("?")) {
+    // 2. Check window.location.hash for query params
+    if ((!ownerParam || !emailParam) && window.location.hash.includes("?")) {
       const hashIndex = window.location.hash.indexOf("?");
       const hashParams = new URLSearchParams(window.location.hash.substring(hashIndex));
-      ownerParam = hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid");
-      if (!emailParam) {
-        emailParam = hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail");
-      }
+      if (!ownerParam) ownerParam = hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid");
+      if (!emailParam) emailParam = hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail");
+      if (!schoolParam) schoolParam = hashParams.get("school") || hashParams.get("schoolName");
     }
   }
 
   if (ownerParam || emailParam) {
+    const rawOwner = ownerParam ? decodeURIComponent(ownerParam).trim() : "";
+    const rawEmail = emailParam ? decodeURIComponent(emailParam).trim().toLowerCase() : "";
+
     const isOwnerMyself = !!(firebaseAuth.currentUser && (
-      (ownerParam && firebaseAuth.currentUser.uid === ownerParam) ||
-      (emailParam && firebaseAuth.currentUser.email?.toLowerCase() === emailParam.toLowerCase())
+      (rawOwner && firebaseAuth.currentUser.uid === rawOwner) ||
+      (rawEmail && firebaseAuth.currentUser.email?.toLowerCase() === rawEmail)
     ));
 
-    const resolvedEmail = emailParam 
-      ? decodeURIComponent(emailParam).toLowerCase() 
-      : (ownerParam && ownerParam.includes("@") 
-          ? decodeURIComponent(ownerParam).toLowerCase() 
-          : (isOwnerMyself ? (firebaseAuth.currentUser?.email?.toLowerCase() || `owner_${ownerParam}@school.com`) : `owner_${ownerParam}@school.com`));
+    // Try resolving from alias cache or localStorage
+    let cachedAlias: { uid: string; email: string } | null = null;
+    if (rawOwner) {
+      cachedAlias = userProfileAliasCache.get(rawOwner.toLowerCase()) || null;
+      if (!cachedAlias && typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem(`user_alias_${rawOwner.toLowerCase()}`);
+          if (raw) cachedAlias = JSON.parse(raw);
+        } catch (e) {}
+      }
+    }
+    if (!cachedAlias && rawEmail) {
+      cachedAlias = userProfileAliasCache.get(rawEmail.toLowerCase()) || null;
+      if (!cachedAlias && typeof window !== "undefined") {
+        try {
+          const raw = localStorage.getItem(`user_alias_${rawEmail.toLowerCase()}`);
+          if (raw) cachedAlias = JSON.parse(raw);
+        } catch (e) {}
+      }
+    }
 
-    const resolvedUid = ownerParam 
-      ? decodeURIComponent(ownerParam) 
-      : (emailParam ? `user_${decodeURIComponent(emailParam).replace(/[^a-zA-Z0-9]/g, '_')}` : (firebaseAuth.currentUser?.uid || "school_default"));
+    let resolvedEmail = rawEmail;
+    if (!resolvedEmail) {
+      if (cachedAlias?.email) {
+        resolvedEmail = cachedAlias.email;
+      } else if (rawOwner.includes("@")) {
+        resolvedEmail = rawOwner.toLowerCase();
+      } else if (isOwnerMyself && firebaseAuth.currentUser?.email) {
+        resolvedEmail = firebaseAuth.currentUser.email.toLowerCase();
+      } else {
+        resolvedEmail = `owner_${rawOwner}@school.com`;
+      }
+    }
+
+    let resolvedUid = rawOwner;
+    if (!resolvedUid) {
+      if (cachedAlias?.uid) {
+        resolvedUid = cachedAlias.uid;
+      } else if (rawEmail) {
+        resolvedUid = `user_${rawEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      } else if (isOwnerMyself && firebaseAuth.currentUser?.uid) {
+        resolvedUid = firebaseAuth.currentUser.uid;
+      } else {
+        resolvedUid = "school_default";
+      }
+    }
+
+    // Save alias mapping in memory for fast synchronous lookup
+    if (resolvedUid && resolvedEmail && !resolvedEmail.endsWith("@school.com")) {
+      userProfileAliasCache.set(resolvedUid.toLowerCase(), { uid: resolvedUid, email: resolvedEmail });
+      userProfileAliasCache.set(resolvedEmail.toLowerCase(), { uid: resolvedUid, email: resolvedEmail });
+    }
 
     return {
       uid: resolvedUid,
@@ -65,9 +131,15 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
   }
 
   if (firebaseAuth.currentUser) {
+    const cUid = firebaseAuth.currentUser.uid;
+    const cEmail = firebaseAuth.currentUser.email?.toLowerCase() || "";
+    if (cUid && cEmail) {
+      userProfileAliasCache.set(cUid.toLowerCase(), { uid: cUid, email: cEmail });
+      userProfileAliasCache.set(cEmail.toLowerCase(), { uid: cUid, email: cEmail });
+    }
     return {
-      uid: firebaseAuth.currentUser.uid,
-      email: firebaseAuth.currentUser.email?.toLowerCase() || "",
+      uid: cUid,
+      email: cEmail,
       isGuest: false
     };
   }
@@ -212,11 +284,40 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     return true;
   }
 
-  // 4. Check URL parameters directly in case state is in transition
+  // 4. In-Memory Alias Cache Match (Resolves Google UID <-> Real Email)
+  if (cUid && userProfileAliasCache.has(cUid)) {
+    const alias = userProfileAliasCache.get(cUid)!;
+    if (docEmail && alias.email && docEmail === alias.email) return true;
+    if (docUid && alias.uid && docUid === alias.uid.toLowerCase()) return true;
+  }
+  if (cEmail && userProfileAliasCache.has(cEmail)) {
+    const alias = userProfileAliasCache.get(cEmail)!;
+    if (docEmail && alias.email && docEmail === alias.email) return true;
+    if (docUid && alias.uid && docUid === alias.uid.toLowerCase()) return true;
+  }
+  if (docUid && userProfileAliasCache.has(docUid)) {
+    const alias = userProfileAliasCache.get(docUid)!;
+    if (cEmail && alias.email && cEmail === alias.email) return true;
+    if (cUid && alias.uid && cUid === alias.uid.toLowerCase()) return true;
+  }
+  if (docEmail && userProfileAliasCache.has(docEmail)) {
+    const alias = userProfileAliasCache.get(docEmail)!;
+    if (cEmail && alias.email && cEmail === alias.email) return true;
+    if (cUid && alias.uid && cUid === alias.uid.toLowerCase()) return true;
+  }
+
+  // 5. Check URL parameters directly in case state is in transition
   if (typeof window !== "undefined") {
     const urlParams = new URLSearchParams(window.location.search);
-    const urlOwner = (urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid") || "").trim().toLowerCase();
-    const urlEmail = (urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail") || "").trim().toLowerCase();
+    let urlOwner = (urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid") || "").trim().toLowerCase();
+    let urlEmail = (urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail") || "").trim().toLowerCase();
+
+    if ((!urlOwner || !urlEmail) && window.location.hash.includes("?")) {
+      const hashIdx = window.location.hash.indexOf("?");
+      const hashParams = new URLSearchParams(window.location.hash.substring(hashIdx));
+      if (!urlOwner) urlOwner = (hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid") || "").trim().toLowerCase();
+      if (!urlEmail) urlEmail = (hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail") || "").trim().toLowerCase();
+    }
 
     if (urlOwner && (docUid === urlOwner || docEmail === urlOwner || docEmail.includes(urlOwner) || docUid.includes(urlOwner))) {
       return true;
@@ -226,12 +327,94 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     }
   }
 
-  // 5. If doc has matching school owner id prefix
+  // 6. If doc has matching school owner id prefix
   if (cUid.startsWith("school_") && (docUid === cUid || docEmail.includes(cUid))) {
     return true;
   }
 
   return false;
+}
+
+/**
+ * Resolves the school owner profile from Firestore by UID or Email
+ */
+export async function resolveOwnerProfileFromDb(ownerIdOrEmail: string): Promise<{ uid: string; email: string; schoolName?: string } | null> {
+  if (!ownerIdOrEmail) return null;
+  const key = ownerIdOrEmail.trim().toLowerCase();
+  
+  if (userProfileAliasCache.has(key)) {
+    return userProfileAliasCache.get(key)!;
+  }
+
+  try {
+    // 1. Try querying registered_users by uid
+    const qUid = query(collection(db, USERS_COLL), where("uid", "==", ownerIdOrEmail));
+    const snapUid = await getDocs(qUid);
+    if (!snapUid.empty) {
+      const data = snapUid.docs[0].data();
+      const profile = {
+        uid: data.uid || ownerIdOrEmail,
+        email: data.email?.toLowerCase() || "",
+        schoolName: data.schoolName || ""
+      };
+      if (profile.uid) {
+        userProfileAliasCache.set(profile.uid.toLowerCase(), profile);
+        try { localStorage.setItem(`user_alias_${profile.uid.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+      }
+      if (profile.email) {
+        userProfileAliasCache.set(profile.email.toLowerCase(), profile);
+        try { localStorage.setItem(`user_alias_${profile.email.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+      }
+      return profile;
+    }
+
+    // 2. Try querying registered_users by email
+    if (ownerIdOrEmail.includes("@")) {
+      const qEmail = query(collection(db, USERS_COLL), where("email", "==", key));
+      const snapEmail = await getDocs(qEmail);
+      if (!snapEmail.empty) {
+        const data = snapEmail.docs[0].data();
+        const profile = {
+          uid: data.uid || "",
+          email: data.email?.toLowerCase() || key,
+          schoolName: data.schoolName || ""
+        };
+        if (profile.uid) {
+          userProfileAliasCache.set(profile.uid.toLowerCase(), profile);
+          try { localStorage.setItem(`user_alias_${profile.uid.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+        }
+        if (profile.email) {
+          userProfileAliasCache.set(profile.email.toLowerCase(), profile);
+          try { localStorage.setItem(`user_alias_${profile.email.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+        }
+        return profile;
+      }
+    }
+
+    // 3. Try checking settings document (e.g., settings_QgOSyBcP28MzmbJT92aH8vdgAG33)
+    const settingsDoc = await getDoc(doc(db, SETTINGS_COLL, `settings_${ownerIdOrEmail}`));
+    if (settingsDoc.exists()) {
+      const sData = settingsDoc.data();
+      const profile = {
+        uid: sData.userId || ownerIdOrEmail,
+        email: sData.userEmail?.toLowerCase() || "",
+        schoolName: sData.schoolName || ""
+      };
+      if (profile.uid) {
+        userProfileAliasCache.set(profile.uid.toLowerCase(), profile);
+        try { localStorage.setItem(`user_alias_${profile.uid.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+      }
+      if (profile.email) {
+        userProfileAliasCache.set(profile.email.toLowerCase(), profile);
+        try { localStorage.setItem(`user_alias_${profile.email.toLowerCase()}`, JSON.stringify(profile)); } catch (e) {}
+      }
+      return profile;
+    }
+  } catch (e) {
+    // Ignore and fallback gracefully
+  }
+
+  return null;
 }
 
 // Migrate guest records in Firestore to an authenticated user upon Google login

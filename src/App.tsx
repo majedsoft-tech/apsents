@@ -15,7 +15,8 @@ import {
   registerUserInDb,
   setActiveUser,
   syncAllLocalDataToFirestore,
-  migrateGuestDataToUser
+  migrateGuestDataToUser,
+  resolveOwnerProfileFromDb
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -238,15 +239,15 @@ export default function App() {
       setSchoolName(decodedSchool);
     }
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (ownerParam || emailParam) {
         const decodedOwner = ownerParam ? decodeURIComponent(ownerParam) : "";
         const decodedEmail = emailParam ? decodeURIComponent(emailParam).toLowerCase() : "";
 
-        const effEmail = decodedEmail 
+        let effEmail = decodedEmail 
           ? decodedEmail 
           : (decodedOwner.includes("@") ? decodedOwner.toLowerCase() : (user?.email?.toLowerCase() || `owner_${decodedOwner}@school.com`));
-        const effUid = decodedOwner 
+        let effUid = decodedOwner 
           ? decodedOwner 
           : (decodedEmail ? `user_${decodedEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : (user?.uid || "school_default"));
 
@@ -258,6 +259,25 @@ export default function App() {
         };
         setCurrentUser(guestUser);
         setActiveUser(guestUser);
+
+        // Asynchronously resolve owner profile from DB to attach real registered email and school name
+        if (decodedOwner || decodedEmail) {
+          resolveOwnerProfileFromDb(decodedOwner || decodedEmail).then((profile) => {
+            if (profile) {
+              const updatedGuestUser = {
+                uid: profile.uid || effUid,
+                email: profile.email || effEmail,
+                displayName: profile.schoolName || guestUser.displayName,
+                isGuest: user?.uid !== (profile.uid || effUid)
+              };
+              setCurrentUser(updatedGuestUser);
+              setActiveUser(updatedGuestUser);
+              if (profile.schoolName) {
+                setSchoolName(profile.schoolName);
+              }
+            }
+          }).catch(() => {});
+        }
       } else if (user) {
         const prevGuestId = localStorage.getItem("own_school_admin_id");
         if (prevGuestId && prevGuestId !== user.uid) {
@@ -265,6 +285,8 @@ export default function App() {
         }
         setCurrentUser(user);
         setActiveUser(user);
+        // Automatic full background synchronization for the logged-in admin
+        syncAllLocalDataToFirestore().catch(() => {});
       } else {
         const ownSchoolId = getOrCreateOwnSchoolAdminId();
         const guestUser = {
@@ -511,7 +533,7 @@ export default function App() {
     if (ownerEmail && !ownerEmail.endsWith("@school.com")) query += `&email=${encodeURIComponent(ownerEmail)}`;
     if (schoolName) query += `&school=${encodeURIComponent(schoolName)}`;
 
-    return `${window.location.origin}${window.location.pathname}?${query}`;
+    return `${window.location.origin}${window.location.pathname}?${query}#/${pageValue}`;
   };
 
   // Robust clipboard copy function with textarea fallback for iframes and permissions
@@ -550,7 +572,7 @@ export default function App() {
     syncAllLocalDataToFirestore().catch(() => {});
     
     // 2. Perform copy immediately in user interaction thread
-    const statsLink = buildSharedUrl("stats-only");
+    const statsLink = buildSharedUrl("stats-only", "tab=stats");
     copyTextToClipboard(statsLink).then((ok) => {
       if (ok) {
         setCopied(true);
