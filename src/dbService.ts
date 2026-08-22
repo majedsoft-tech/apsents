@@ -113,7 +113,7 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
       } else if (isOwnerMyself && firebaseAuth.currentUser?.uid) {
         resolvedUid = firebaseAuth.currentUser.uid;
       } else {
-        resolvedUid = "school_default";
+        resolvedUid = "school_main";
       }
     }
 
@@ -164,7 +164,7 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
     }
     let stored = localStorage.getItem("own_school_admin_id");
     if (!stored) {
-      stored = "school_" + Math.random().toString(36).substring(2, 10);
+      stored = "school_main";
       localStorage.setItem("own_school_admin_id", stored);
     }
     return {
@@ -175,8 +175,8 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
   }
 
   return {
-    uid: "school_default",
-    email: "owner_school_default@school.com",
+    uid: "school_main",
+    email: "owner_school_main@school.com",
     isGuest: true
   };
 }
@@ -187,12 +187,12 @@ export function getOrCreateOwnSchoolAdminId(): string {
     if (linked) return linked;
     let stored = localStorage.getItem("own_school_admin_id");
     if (!stored) {
-      stored = "school_" + Math.random().toString(36).substring(2, 10);
+      stored = "school_main";
       localStorage.setItem("own_school_admin_id", stored);
     }
     return stored;
   }
-  return "school_default";
+  return "school_main";
 }
 
 export function setLinkedSchoolOwnerId(id: string): void {
@@ -287,9 +287,15 @@ function generateLocalId(prefix: string = "id"): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
-// Helper to check if a document belongs to a specific user/school (strict multi-tenant isolation)
+// Helper to check if a document belongs to a specific user/school
 export function isDocBelongingToUser(data: any, currentUid: string, currentEmail: string): boolean {
   if (!data) return false;
+
+  // Documents without specific user isolation tags belong globally to the connected school database
+  if (!data.userId && !data.userEmail) {
+    return true;
+  }
+
   const docUid = data.userId ? String(data.userId).trim().toLowerCase() : "";
   const docEmail = data.userEmail ? String(data.userEmail).trim().toLowerCase() : "";
   const cUid = currentUid ? String(currentUid).trim().toLowerCase() : "";
@@ -357,8 +363,16 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     }
   }
 
-  // 6. If doc has matching school owner id prefix
-  if (cUid.startsWith("school_") && (docUid === cUid || docEmail.includes(cUid))) {
+  // 6. If both the doc and current session are school/admin guest instances on this shared Firebase database, they share data seamlessly
+  const isCurrentGuest = !cEmail || cEmail.endsWith("@school.com") || cUid.startsWith("school_") || cUid === "school_default" || cUid === "school_main";
+  const isDocGuest = !docEmail || docEmail.endsWith("@school.com") || docUid.startsWith("school_") || docUid === "school_default" || docUid === "school_main";
+
+  if (isCurrentGuest || isDocGuest) {
+    return true;
+  }
+
+  // 7. If the document is part of this school database and not owned by an explicit different registered user
+  if (!docEmail.includes("@") || docEmail.endsWith("@school.com")) {
     return true;
   }
 
@@ -1471,12 +1485,11 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
 // --- SCHOOL SETTINGS ---
 export async function getSchoolName(): Promise<string> {
   const eff = getEffectiveUidAndEmail();
-  if (!eff) return "";
-  const uid = eff.uid;
-  const email = eff.email;
+  const uid = eff?.uid || "school_main";
+  const email = eff?.email || "";
   
   if (typeof window !== "undefined") {
-    const localName = localStorage.getItem(`school_name_${uid}`) || localStorage.getItem(`school_name_${email}`);
+    const localName = localStorage.getItem(`school_name_${uid}`) || (email ? localStorage.getItem(`school_name_${email}`) : null) || localStorage.getItem("school_name_cached");
     if (localName) return localName;
   }
 
@@ -1485,17 +1498,20 @@ export async function getSchoolName(): Promise<string> {
     let schoolNameVal = "";
     querySnapshot.forEach(docSnap => {
       const data = docSnap.data();
-      if (isDocBelongingToUser(data, uid, email) && data.schoolName) {
+      if (data.schoolName && isDocBelongingToUser(data, uid, email)) {
+        schoolNameVal = data.schoolName;
+      } else if (!schoolNameVal && data.schoolName) {
         schoolNameVal = data.schoolName;
       }
     });
     if (schoolNameVal && typeof window !== "undefined") {
       localStorage.setItem(`school_name_${uid}`, schoolNameVal);
+      localStorage.setItem("school_name_cached", schoolNameVal);
     }
     return schoolNameVal;
   } catch (err) {
     if (typeof window !== "undefined") {
-      return localStorage.getItem(`school_name_${uid}`) || "";
+      return localStorage.getItem(`school_name_${uid}`) || localStorage.getItem("school_name_cached") || "";
     }
   }
   return "";
@@ -1503,12 +1519,13 @@ export async function getSchoolName(): Promise<string> {
 
 export async function saveSchoolName(schoolName: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff?.uid || auth.currentUser?.uid;
-  const email = eff?.email || auth.currentUser?.email?.toLowerCase() || "";
+  const uid = eff?.uid || "school_main";
+  const email = eff?.email || "";
   if (!uid) return;
 
   if (typeof window !== "undefined") {
     localStorage.setItem(`school_name_${uid}`, schoolName);
+    localStorage.setItem(`school_name_cached`, schoolName);
     if (email) localStorage.setItem(`school_name_${email}`, schoolName);
   }
 
@@ -1609,12 +1626,13 @@ export function subscribeToStudents(callback: (students: Student[]) => void, onE
 // Subscribe School Name in real-time
 export function subscribeToSchoolName(callback: (schoolName: string) => void, onError?: (error: any) => void) {
   const eff = getEffectiveUidAndEmail();
-  if (!eff) {
-    callback("");
-    return () => {};
+  const currentUid = eff?.uid || "school_main";
+  const currentEmail = eff?.email || "";
+
+  if (typeof window !== "undefined") {
+    const cached = localStorage.getItem(`school_name_${currentUid}`) || (currentEmail ? localStorage.getItem(`school_name_${currentEmail}`) : null) || localStorage.getItem("school_name_cached");
+    if (cached) callback(cached);
   }
-  const currentUid = eff.uid;
-  const currentEmail = eff.email;
 
   try {
     const q = collection(db, SETTINGS_COLL);
@@ -1622,10 +1640,16 @@ export function subscribeToSchoolName(callback: (schoolName: string) => void, on
       let schoolNameVal = "";
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.schoolName) {
+        if (data.schoolName && isDocBelongingToUser(data, currentUid, currentEmail)) {
+          schoolNameVal = data.schoolName;
+        } else if (!schoolNameVal && data.schoolName) {
           schoolNameVal = data.schoolName;
         }
       });
+      if (schoolNameVal && typeof window !== "undefined") {
+        localStorage.setItem(`school_name_${currentUid}`, schoolNameVal);
+        localStorage.setItem("school_name_cached", schoolNameVal);
+      }
       callback(schoolNameVal);
     }, (err) => {
       if (onError) onError(err);

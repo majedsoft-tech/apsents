@@ -15,10 +15,11 @@ export const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with robust connection settings (forcing long-polling to prevent proxy/firewall blockages)
+// Initialize Firestore with robust connection settings (auto-detect long-polling and resilient transport)
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, (firebaseConfig as Record<string, string>).firestoreDatabaseId || undefined);
+  experimentalAutoDetectLongPolling: true,
+  ignoreUndefinedProperties: true,
+});
 
 // Initialize Auth
 export const auth = getAuth(app);
