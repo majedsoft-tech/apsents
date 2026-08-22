@@ -2137,27 +2137,7 @@ export default function AdminPanel({
 
 
 
-      {/* Welcome & Empty State Info Interactive Banner */}
-      {grades.length === 0 && students.length === 0 && teachers.length === 0 && (
-        <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50/50 border-2 border-indigo-400/60 rounded-2xl p-6 text-right space-y-5 shadow-md print:hidden ring-4 ring-indigo-400/30 animate-pulse" dir="rtl">
-          <div className="flex items-start gap-3.5">
-            <span className="text-3xl mt-0.5 animate-bounce">🌱</span>
-            <div>
-              <h3 className="text-sm font-black text-slate-800">مرحباً بك في منصة SmartSchool الرقمية الحية!</h3>
-              <p className="text-3xs text-slate-500 font-bold mt-1 leading-relaxed">
-                لقد قمت بتسجيل الدخول بنجاح. قاعدة بياناتك الحالية فارغة تماماً ومستقلة لتضمن خصوصية تامة لسجلاتك. اتبع الخطوات التفاعلية أدناه لتهيئة مدرستك وبدء العمل في دقائق معدودة:
-              </p>
-              <p className={`text-xs font-black text-rose-600 rounded-lg px-3.5 py-2.5 mt-3 inline-block transition-all duration-1000 ease-in-out transform ${
-                temporaryGlow 
-                  ? "bg-rose-100 border-2 border-rose-500 ring-4 ring-rose-400/50 scale-108 rotate-1 shadow-md animate-bounce" 
-                  : "bg-rose-50/50 border border-rose-100 shadow-3xs animate-pulse"
-              }`}>
-                🚀 أنت على بعد خطوات للحصول على نظام متابعة ورصد الغياب بشكل مختلف
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* SUB-TAB 1: STATISTICS & ANALYTICS */}
       {activeSubTab === "stats" && (
