@@ -16,7 +16,9 @@ import {
   setActiveUser,
   syncAllLocalDataToFirestore,
   migrateGuestDataToUser,
-  resolveOwnerProfileFromDb
+  resolveOwnerProfileFromDb,
+  getOrCreateOwnSchoolAdminId,
+  setLinkedSchoolOwnerId
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -48,30 +50,16 @@ import {
   ExternalLink,
   LogOut,
   Edit2,
-  SunMedium
+  SunMedium,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  Key,
+  Link2,
+  Share2,
+  Sparkles,
+  HelpCircle
 } from "lucide-react";
-
-function getOrCreateOwnSchoolAdminId(): string {
-  let stored = localStorage.getItem("own_school_admin_id");
-  if (!stored) {
-    const legacyGuest = localStorage.getItem("guest_user_session");
-    if (legacyGuest) {
-      try {
-        const parsed = JSON.parse(legacyGuest);
-        if (parsed?.uid && !parsed.uid.startsWith("owner_")) {
-          stored = parsed.uid;
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-    if (!stored) {
-      stored = "school_" + Math.random().toString(36).substring(2, 10);
-    }
-    localStorage.setItem("own_school_admin_id", stored);
-  }
-  return stored;
-}
 
 function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay" {
   const path = window.location.pathname.toLowerCase();
@@ -126,6 +114,15 @@ export default function App() {
   // School Name States
   const [schoolName, setSchoolName] = useState<string>("");
   const [isSavingSchoolName, setIsSavingSchoolName] = useState<boolean>(false);
+
+  // Cloud Sync & Cross-Domain Link States
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
+  const [syncCodeInput, setSyncCodeInput] = useState<string>("");
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
+  const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
+  const [adminSyncCopied, setAdminSyncCopied] = useState<boolean>(false);
+  const [schoolCodeCopied, setSchoolCodeCopied] = useState<boolean>(false);
+  const [isLinkingLoading, setIsLinkingLoading] = useState<boolean>(false);
 
   // Global Operation Progress State (Saves/Loads/Deletes across the app)
   const [globalProgress, setGlobalProgress] = useState<{
@@ -607,6 +604,109 @@ export default function App() {
         setTimeout(() => setMorningDelayCopied(false), 2000);
       }
     });
+  };
+
+  const handleCopyAdminSyncLink = () => {
+    syncAllLocalDataToFirestore().catch(() => {});
+    const adminLink = buildSharedUrl("admin", "page=admin&tab=stats");
+    copyTextToClipboard(adminLink).then((ok) => {
+      if (ok) {
+        setAdminSyncCopied(true);
+        setTimeout(() => setAdminSyncCopied(false), 2500);
+      }
+    });
+  };
+
+  const handleCopySchoolCode = (code: string) => {
+    copyTextToClipboard(code).then((ok) => {
+      if (ok) {
+        setSchoolCodeCopied(true);
+        setTimeout(() => setSchoolCodeCopied(false), 2500);
+      }
+    });
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoginError(null);
+    try {
+      const prevGuestUid = currentUser?.isGuest ? currentUser.uid : null;
+      const res = await signInWithPopup(auth, googleProvider);
+      const user = res.user;
+      if (user && prevGuestUid && prevGuestUid !== user.uid) {
+        await migrateGuestDataToUser(prevGuestUid, user.uid, user.email || "");
+      }
+      await syncAllLocalDataToFirestore();
+      setAppMode("admin");
+      setAdminTab("stats");
+      localStorage.removeItem("last_admin_tab");
+      window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
+      setIsSyncModalOpen(false);
+    } catch (err: any) {
+      console.error("Google Sign-In Error:", err);
+      if (err?.code === "auth/unauthorized-domain" || err?.message?.includes("unauthorized-domain")) {
+        setLoginError("auth/unauthorized-domain");
+      } else {
+        setLoginError(err?.message || "حدث خطأ أثناء تسجيل الدخول");
+      }
+    }
+  };
+
+  const handleLinkSchoolCode = async (rawInput: string) => {
+    if (!rawInput || !rawInput.trim()) {
+      setSyncErrorMsg("الرجاء إدخال كود المزامنة أو الرابط المباشر");
+      return;
+    }
+
+    setSyncErrorMsg(null);
+    setSyncSuccessMsg(null);
+    setIsLinkingLoading(true);
+
+    try {
+      let targetCode = rawInput.trim();
+      // If a full URL was pasted, extract owner or email parameter
+      if (targetCode.includes("?") || targetCode.includes("#")) {
+        try {
+          const urlObj = new URL(targetCode.startsWith("http") ? targetCode : `https://${targetCode}`);
+          const pOwner = urlObj.searchParams.get("owner") || urlObj.searchParams.get("ownerId") || urlObj.searchParams.get("uid");
+          const pEmail = urlObj.searchParams.get("email") || urlObj.searchParams.get("ownerEmail");
+          if (pOwner) targetCode = decodeURIComponent(pOwner);
+          else if (pEmail) targetCode = decodeURIComponent(pEmail);
+          else if (urlObj.hash.includes("?")) {
+            const hashIdx = urlObj.hash.indexOf("?");
+            const hashParams = new URLSearchParams(urlObj.hash.substring(hashIdx));
+            const hOwner = hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid");
+            const hEmail = hashParams.get("email") || hashParams.get("ownerEmail");
+            if (hOwner) targetCode = decodeURIComponent(hOwner);
+            else if (hEmail) targetCode = decodeURIComponent(hEmail);
+          }
+        } catch (e) {}
+      }
+
+      setLinkedSchoolOwnerId(targetCode);
+
+      // Attempt to resolve profile from DB or use clean ID
+      const resolved = await resolveOwnerProfileFromDb(targetCode);
+      const updatedUser = {
+        uid: resolved?.uid || targetCode,
+        email: resolved?.email || (targetCode.includes("@") ? targetCode : `owner_${targetCode}@school.com`),
+        displayName: resolved?.schoolName || "مدرسة متزامنة سحابياً",
+        isGuest: true
+      };
+
+      setCurrentUser(updatedUser);
+      setActiveUser(updatedUser);
+
+      // Refresh data
+      await handleRefreshData();
+
+      setSyncSuccessMsg("تم ربط ومزامنة بيانات المدرسة بنجاح! تم تحميل الهيكل والصفوف وكافة البيانات.");
+      setSyncCodeInput("");
+    } catch (err: any) {
+      console.error("Link error:", err);
+      setSyncErrorMsg("حدث خطأ أثناء محاولة الربط: " + (err?.message || ""));
+    } finally {
+      setIsLinkingLoading(false);
+    }
   };
 
   const handleSchoolNameChange = async (newName: string) => {
@@ -1332,50 +1432,89 @@ export default function App() {
 
       {/* Sidebar Footer Info */}
       <div className="border-t border-slate-200/80 pt-4 mt-auto space-y-3 px-1">
-        {/* Combined User Profile and Logout Container (Single Group) */}
-        <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3 space-y-3.5 shadow-3xs">
-          {/* User Profile Info */}
+        {/* Cloud Sync & Account Status Container */}
+        <div className="bg-slate-50/90 border border-slate-200/90 rounded-2xl p-3 space-y-3 shadow-3xs">
+          {/* User Profile Info / Status */}
           <div className="flex items-center gap-3">
-            {/* Right side: Avatar (first element in RTL) */}
-            <div className="w-10 h-10 rounded-full border border-indigo-500 bg-indigo-600 flex items-center justify-center text-white font-extrabold text-sm flex-shrink-0 shadow-3xs">
-              {(currentUser?.displayName || currentUser?.email || "M").charAt(0).toUpperCase()}
+            {/* Avatar */}
+            <div className={`w-10 h-10 rounded-full border ${currentUser?.isGuest ? 'border-amber-500 bg-amber-500 text-amber-950' : 'border-indigo-500 bg-indigo-600 text-white'} flex items-center justify-center font-extrabold text-sm flex-shrink-0 shadow-3xs`}>
+              {currentUser?.isGuest ? <CloudOff className="w-5 h-5" /> : <Cloud className="w-5 h-5" />}
             </div>
 
-            {/* Left side: Text details (second element in RTL) */}
+            {/* Text details */}
             <div className="flex-1 min-w-0 text-right pr-0.5">
-              <p className="text-xs font-black text-slate-800 tracking-tight truncate">
-                {currentUser?.displayName || "مستخدم مسجل"}
+              <div className="flex items-center gap-1.5 justify-start">
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black ${
+                  currentUser?.isGuest ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${currentUser?.isGuest ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+                  {currentUser?.isGuest ? "وضع محلي" : "مزامنة سحابية مفعّلة"}
+                </span>
+              </div>
+              <p className="text-xs font-black text-slate-800 tracking-tight truncate mt-1">
+                {currentUser?.isGuest ? "إدارة المدرسة (مباشر)" : (currentUser?.displayName || "مدير المدرسة")}
               </p>
               <p className="text-[10px] text-slate-500 font-bold truncate mt-0.5" dir="ltr">
-                {currentUser?.email || ""}
+                {currentUser?.isGuest ? "غير مرتبط بحساب Google" : (currentUser?.email || "")}
               </p>
             </div>
           </div>
 
-          {/* Horizontal separator matching the theme */}
-          <div className="border-t border-slate-200/80"></div>
+          {/* Sync Action Buttons */}
+          <div className="space-y-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setSyncSuccessMsg(null);
+                setSyncErrorMsg(null);
+                setIsSyncModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200/80 text-indigo-900 rounded-xl font-extrabold text-[11px] transition-all duration-200 cursor-pointer shadow-3xs"
+            >
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
+                <span>إعدادات المزامنة وكود الربط</span>
+              </div>
+              <ChevronLeft className="w-3.5 h-3.5 text-indigo-400" />
+            </button>
 
-          {/* Logout Button */}
-          <button
-            type="button"
-            onClick={async () => {
-              localStorage.removeItem("guest_user_session");
-              localStorage.removeItem("last_admin_tab");
-              try {
-                await signOut(auth);
-              } catch (err) {
-                console.error("Logout Error:", err);
-              }
-              setCurrentUser(null);
-              setAppMode("admin");
-              setAdminTab("stats");
-              window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
-            }}
-            className="w-full flex items-center justify-start gap-2.5 px-3 py-2 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 text-rose-600 hover:text-rose-700 rounded-xl transition-all duration-200 cursor-pointer"
-          >
-            <LogOut className="w-4 h-4 flex-shrink-0" />
-            <span className="font-extrabold text-[11px]">تسجيل الخروج</span>
-          </button>
+            {currentUser?.isGuest ? (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 rounded-xl font-extrabold text-[11px] transition-all duration-200 cursor-pointer shadow-3xs"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                  <path
+                    fill="#EA4335"
+                    d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
+                  />
+                </svg>
+                <span>تسجيل الدخول بـ Google</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  localStorage.removeItem("guest_user_session");
+                  localStorage.removeItem("last_admin_tab");
+                  try {
+                    await signOut(auth);
+                  } catch (err) {
+                    console.error("Logout Error:", err);
+                  }
+                  setCurrentUser(null);
+                  setAppMode("admin");
+                  setAdminTab("stats");
+                  window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
+                }}
+                className="w-full flex items-center justify-start gap-2.5 px-3 py-2 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 text-rose-600 hover:text-rose-700 rounded-xl transition-all duration-200 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 flex-shrink-0" />
+                <span className="font-extrabold text-[11px]">تسجيل الخروج</span>
+              </button>
+            )}
+          </div>
         </div>
 
 
@@ -1414,6 +1553,53 @@ export default function App() {
 
         {/* Dynamic Inner Portal Content */}
         <main className="flex-1 w-full max-w-none px-3 md:px-6 py-4 space-y-4">
+          {/* Guest Cloud Sync Notice Banner */}
+          {currentUser?.isGuest && appMode === "admin" && (
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-3.5 px-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 border border-indigo-700/50 animate-in fade-in">
+              <div className="flex items-center gap-3 text-right w-full sm:w-auto">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 flex-shrink-0">
+                  <CloudOff className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-black">
+                    البيانات الحالية تعمل بوضع محلي (غير مسجل بحساب Google)
+                  </p>
+                  <p className="text-[11px] text-slate-300 font-medium">
+                    لمزامنة وتوحيد البيانات فورياً بين كلاود فلير وقوقل ستوديو والجوال، سجّل الدخول بـ Google أو اربط كود المزامنة.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  className="flex-1 sm:flex-initial py-2 px-3.5 bg-white hover:bg-slate-100 text-slate-900 font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
+                    />
+                  </svg>
+                  <span>تسجيل الدخول بـ Google</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSyncSuccessMsg(null);
+                    setSyncErrorMsg(null);
+                    setIsSyncModalOpen(true);
+                  }}
+                  className="flex-1 sm:flex-initial py-2 px-3 bg-indigo-800/80 hover:bg-indigo-700 text-indigo-100 font-bold text-xs rounded-xl border border-indigo-600/60 flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>كود المزامنة</span>
+                </button>
+              </div>
+            </div>
+          )}
           
           {/* Mobile Permanent Inline Menu Card (Always visible at the top on phones <768px) */}
           {showSidebar && (
@@ -1577,6 +1763,239 @@ export default function App() {
           setTeacherTab={setTeacherTab}
           setIsSidebarOpen={setIsSidebarOpen}
         />
+      )}
+
+      {/* Cloud Sync & Cross-Domain Link Modal */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200" dir="rtl">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 max-w-lg w-full text-right space-y-6 shadow-2xl relative my-8">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-3xs flex-shrink-0">
+                  <RefreshCw className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 leading-tight">
+                    إعدادات المزامنة السحابية والربط
+                  </h3>
+                  <p className="text-xs text-slate-500 font-bold mt-0.5">
+                    توحيد البيانات بين كلاود فلير وقوقل ستوديو والجوال
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSyncModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-full transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Status & Messages */}
+            {syncSuccessMsg && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-in fade-in">
+                <Check className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                <span>{syncSuccessMsg}</span>
+              </div>
+            )}
+
+            {syncErrorMsg && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-in fade-in">
+                <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+                <span>{syncErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Current School Information Block */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black text-slate-500 uppercase tracking-wide">
+                  معلومات المدرسة الحالية:
+                </span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  currentUser?.isGuest ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {currentUser?.isGuest ? 'وضع محلي غير موثق' : 'حساب موثق ومزامن'}
+                </span>
+              </div>
+
+              <div className="space-y-2 text-xs font-bold text-slate-700">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">اسم المدرسة:</span>
+                  <span className="font-extrabold text-slate-800">{schoolName || "لم يحدد بعد"}</span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-400 flex-shrink-0">كود المزامنة (Sync Code):</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <code className="bg-white border border-slate-200 px-2 py-1 rounded-lg text-[11px] font-mono text-indigo-700 select-all truncate">
+                      {currentUser?.uid || "school_default"}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => handleCopySchoolCode(currentUser?.uid || "school_default")}
+                      className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 flex items-center gap-1 cursor-pointer transition flex-shrink-0 shadow-3xs"
+                    >
+                      {schoolCodeCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{schoolCodeCopied ? "تم" : "نسخ"}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct Admin Sync Link Button */}
+              <div className="pt-2 border-t border-slate-200/60">
+                <button
+                  type="button"
+                  onClick={handleCopyAdminSyncLink}
+                  className="w-full py-2 px-3 bg-white hover:bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 flex items-center justify-between cursor-pointer transition shadow-3xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-indigo-600" />
+                    <span>نسخ رابط لوحة التحكم المباشر مع معرّف المزامنة</span>
+                  </div>
+                  {adminSyncCopied ? (
+                    <span className="text-[10px] text-emerald-600 font-extrabold flex items-center gap-0.5">
+                      <Check className="w-3 h-3" /> تم النسخ
+                    </span>
+                  ) : (
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Method 1: Google Login (Fastest & Best) */}
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>الخيار الأول (الموصى به): تسجيل الدخول بحساب Google</span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                سجّل الدخول بنفس حساب Google في كلوفلاير وفي قوقل ستوديو. سيتم ربط كافة البيانات تلقائياً، وتصبح متطابقة في كل مكان.
+              </p>
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold py-3 px-4 rounded-2xl flex items-center justify-center gap-3 text-xs shadow-md transition cursor-pointer"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#EA4335"
+                    d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
+                  />
+                </svg>
+                <span>{currentUser?.isGuest ? "تسجيل الدخول وربط البيانات السحابية" : "إعادة المزامنة بحساب Google"}</span>
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="relative flex items-center justify-center">
+              <div className="border-t border-slate-200 w-full"></div>
+              <span className="bg-white px-3 text-[11px] font-black text-slate-400 absolute">أو</span>
+            </div>
+
+            {/* Method 2: Link by Code / URL */}
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
+                <Key className="w-4 h-4 text-indigo-600" />
+                <span>الخيار الثاني: ربط برمز مدرسة / كود المزامنة من متصفح آخر</span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                إذا قمت بإنشاء الفصول على كلاود فلير (أو جهاز آخر)، انسخ كود المزامنة أو الرابط وألصقه هنا لتحميل الفصول فورياً:
+              </p>
+              
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={syncCodeInput}
+                  onChange={(e) => setSyncCodeInput(e.target.value)}
+                  placeholder="ألصق كود المزامنة (مثل: school_xxxx أو الرابط)..."
+                  className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-300 focus:border-indigo-600 focus:bg-white rounded-xl text-right text-slate-800 outline-none transition"
+                />
+                
+                <button
+                  type="button"
+                  disabled={isLinkingLoading || !syncCodeInput.trim()}
+                  onClick={() => handleLinkSchoolCode(syncCodeInput)}
+                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition cursor-pointer"
+                >
+                  {isLinkingLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>جاري المزامنة وتحميل البيانات...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>مزامنة وتحميل بيانات المدرسة فورياً</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Authorized Domain Help Modal */}
+      {loginError === "auth/unauthorized-domain" && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200" dir="rtl">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 max-w-md w-full text-right space-y-5 shadow-2xl relative">
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-3xs flex-shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">تفعيل النطاق في Firebase</h3>
+                <p className="text-[11px] text-slate-500 font-bold">مطلوب خطوة واحدة فقط في لوحة تحكم Firebase</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-700 font-medium space-y-3 leading-relaxed">
+              <p>
+                لتسجيل الدخول بـ Google على نطاق كلاود فلير الخاص بك، يرجى إضافة هذا النطاق إلى النطاقات المصرح بها في Firebase:
+              </p>
+
+              <div className="bg-slate-100 border border-slate-300 rounded-xl p-2.5 flex items-center justify-between">
+                <code className="text-indigo-700 font-mono font-bold text-xs" dir="ltr">
+                  {typeof window !== "undefined" ? window.location.hostname : "apsents.majedsoft.workers.dev"}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const host = typeof window !== "undefined" ? window.location.hostname : "";
+                    copyTextToClipboard(host);
+                    setDomainCopied(true);
+                    setTimeout(() => setDomainCopied(false), 2000);
+                  }}
+                  className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 shadow-3xs flex items-center gap-1 cursor-pointer"
+                >
+                  {domainCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                  <span>{domainCopied ? "تم النسخ" : "نسخ النطاق"}</span>
+                </button>
+              </div>
+
+              <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600 pr-1">
+                <li>افتح <strong>Firebase Console</strong> ثم اختر مشروعك.</li>
+                <li>انتقل إلى <strong>Authentication</strong> ثم تبويب <strong>Settings</strong>.</li>
+                <li>انزل إلى <strong>Authorized domains</strong> واضغط <strong>Add domain</strong> وألصق النطاق.</li>
+              </ol>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setLoginError(null)}
+                className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs cursor-pointer"
+              >
+                حسناً، فهمت
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

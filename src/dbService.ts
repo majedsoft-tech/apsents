@@ -154,6 +154,14 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
 
   // Check stored ID in localStorage so write operations never fail
   if (typeof window !== "undefined") {
+    let linked = localStorage.getItem("linked_school_owner_id");
+    if (linked) {
+      return {
+        uid: linked,
+        email: `owner_${linked}@school.com`,
+        isGuest: true
+      };
+    }
     let stored = localStorage.getItem("own_school_admin_id");
     if (!stored) {
       stored = "school_" + Math.random().toString(36).substring(2, 10);
@@ -171,6 +179,28 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
     email: "owner_school_default@school.com",
     isGuest: true
   };
+}
+
+export function getOrCreateOwnSchoolAdminId(): string {
+  if (typeof window !== "undefined") {
+    let linked = localStorage.getItem("linked_school_owner_id");
+    if (linked) return linked;
+    let stored = localStorage.getItem("own_school_admin_id");
+    if (!stored) {
+      stored = "school_" + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem("own_school_admin_id", stored);
+    }
+    return stored;
+  }
+  return "school_default";
+}
+
+export function setLinkedSchoolOwnerId(id: string): void {
+  if (typeof window !== "undefined" && id) {
+    const cleanId = id.trim();
+    localStorage.setItem("linked_school_owner_id", cleanId);
+    localStorage.setItem("own_school_admin_id", cleanId);
+  }
 }
 
 // Auth proxy returning actual or effective user
