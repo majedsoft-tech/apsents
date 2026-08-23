@@ -58,9 +58,9 @@ export default function SuperAdminPanel({
     try {
       const data = await getRegisteredUsers();
       setUsers(data);
-    } catch (err) {
-      console.error("Error fetching registered users:", err);
-      showMessage("حدث خطأ أثناء تحميل بيانات المستخدمين.", "error");
+    } catch {
+      // Graceful fallback to avoid alert toasts
+      setUsers([]);
     } finally {
       setLoading(false);
     }

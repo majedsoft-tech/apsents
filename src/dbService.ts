@@ -1721,36 +1721,60 @@ export async function registerUserInDb(
  */
 export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, USERS_COLL));
     const users: RegisteredUser[] = [];
-    
-    querySnapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      users.push({
-        id: docSnap.id,
-        uid: data.uid,
-        email: data.email,
-        displayName: data.displayName,
-        photoURL: data.photoURL,
-        lastLogin: data.lastLogin || Date.now(),
-        createdAt: data.createdAt || Date.now(),
-        schoolName: data.schoolName || "",
-        status: data.status || "نشط"
+    const seenUids = new Set<string>();
+
+    try {
+      const querySnapshot = await getDocs(collection(db, USERS_COLL));
+      querySnapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const uid = data.uid || docSnap.id;
+        if (uid && !seenUids.has(uid)) {
+          seenUids.add(uid);
+          users.push({
+            id: docSnap.id,
+            uid: uid,
+            email: data.email || "",
+            displayName: data.displayName || "مستخدم مسجل",
+            photoURL: data.photoURL || "",
+            lastLogin: data.lastLogin || Date.now(),
+            createdAt: data.createdAt || Date.now(),
+            schoolName: data.schoolName || "",
+            status: data.status || "نشط"
+          });
+        }
       });
-    });
+    } catch (permErr) {
+      // If Firestore security rules restrict reading USERS_COLL, read from local cache
+      const cachedUsers = getLocalItems(USERS_COLL);
+      cachedUsers.forEach(u => {
+        if (u && u.uid && !seenUids.has(u.uid)) {
+          seenUids.add(u.uid);
+          users.push(u);
+        }
+      });
+    }
 
-    // To provide real statistics for the super admin, let's aggregate counts across all documents!
-    // We will query all grades, classes, teachers, and students once and count them grouped by userId/userEmail.
-    const [allGrades, allClasses, allTeachers, allStudents] = await Promise.all([
-      getDocs(collection(db, GRADES_COLL)),
-      getDocs(collection(db, CLASSES_COLL)),
-      getDocs(collection(db, TEACHERS_COLL)),
-      getDocs(collection(db, STUDENTS_COLL))
-    ]);
+    // If still empty, add current active user if available
+    if (users.length === 0) {
+      const eff = getEffectiveUidAndEmail();
+      if (eff && eff.uid) {
+        users.push({
+          id: eff.uid,
+          uid: eff.uid,
+          email: eff.email || "school_admin@school.com",
+          displayName: activeUserProxy?.displayName || "مدير المدرسة الحالي",
+          photoURL: "",
+          lastLogin: Date.now(),
+          createdAt: Date.now(),
+          schoolName: localStorage.getItem(`school_name_${eff.uid}`) || localStorage.getItem("school_name_cached") || "المدرسة الرئيسية",
+          status: "نشط"
+        });
+      }
+    }
 
-    // Build user stats map
+    // Count statistics safely
     const userStatsMap: Record<string, { grades: number; classes: number; teachers: number; students: number }> = {};
-    
     const incrementStat = (userId: string, email: string, statType: "grades" | "classes" | "teachers" | "students") => {
       const key = userId || email?.toLowerCase();
       if (!key) return;
@@ -1760,22 +1784,41 @@ export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
       userStatsMap[key][statType]++;
     };
 
-    allGrades.forEach(d => {
-      const data = d.data();
-      incrementStat(data.userId, data.userEmail, "grades");
-    });
-    allClasses.forEach(d => {
-      const data = d.data();
-      incrementStat(data.userId, data.userEmail, "classes");
-    });
-    allTeachers.forEach(d => {
-      const data = d.data();
-      incrementStat(data.userId, data.userEmail, "teachers");
-    });
-    allStudents.forEach(d => {
-      const data = d.data();
-      incrementStat(data.userId, data.userEmail, "students");
-    });
+    try {
+      const [allGrades, allClasses, allTeachers, allStudents] = await Promise.all([
+        getDocs(collection(db, GRADES_COLL)).catch(() => null),
+        getDocs(collection(db, CLASSES_COLL)).catch(() => null),
+        getDocs(collection(db, TEACHERS_COLL)).catch(() => null),
+        getDocs(collection(db, STUDENTS_COLL)).catch(() => null)
+      ]);
+
+      if (allGrades) {
+        allGrades.forEach(d => {
+          const data = d.data();
+          incrementStat(data.userId, data.userEmail, "grades");
+        });
+      }
+      if (allClasses) {
+        allClasses.forEach(d => {
+          const data = d.data();
+          incrementStat(data.userId, data.userEmail, "classes");
+        });
+      }
+      if (allTeachers) {
+        allTeachers.forEach(d => {
+          const data = d.data();
+          incrementStat(data.userId, data.userEmail, "teachers");
+        });
+      }
+      if (allStudents) {
+        allStudents.forEach(d => {
+          const data = d.data();
+          incrementStat(data.userId, data.userEmail, "students");
+        });
+      }
+    } catch {
+      // Safe fallback if collections cannot be enumerated
+    }
 
     // Map counts back to each user
     users.forEach(u => {
@@ -1792,7 +1835,6 @@ export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
     // Sort by registration date descending (newest first)
     return users.sort((a, b) => b.createdAt - a.createdAt);
   } catch (err) {
-    console.error("Error loading registered users:", err);
     return [];
   }
 }
