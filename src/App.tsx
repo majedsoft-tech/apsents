@@ -1443,15 +1443,7 @@ export default function App() {
 
             {/* Text details */}
             <div className="flex-1 min-w-0 text-right pr-0.5">
-              <div className="flex items-center gap-1.5 justify-start">
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black ${
-                  currentUser?.isGuest ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${currentUser?.isGuest ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
-                  {currentUser?.isGuest ? "وضع محلي" : "مزامنة سحابية مفعّلة"}
-                </span>
-              </div>
-              <p className="text-xs font-black text-slate-800 tracking-tight truncate mt-1">
+              <p className="text-xs font-black text-slate-800 tracking-tight truncate">
                 {currentUser?.isGuest ? "إدارة المدرسة (مباشر)" : (currentUser?.displayName || "مدير المدرسة")}
               </p>
               <p className="text-[10px] text-slate-500 font-bold truncate mt-0.5" dir="ltr">
@@ -1460,24 +1452,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sync Action Buttons */}
+          {/* Action Buttons */}
           <div className="space-y-1.5 pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                setSyncSuccessMsg(null);
-                setSyncErrorMsg(null);
-                setIsSyncModalOpen(true);
-              }}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200/80 text-indigo-900 rounded-xl font-extrabold text-[11px] transition-all duration-200 cursor-pointer shadow-3xs"
-            >
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
-                <span>إعدادات المزامنة وكود الربط</span>
-              </div>
-              <ChevronLeft className="w-3.5 h-3.5 text-indigo-400" />
-            </button>
-
             {currentUser?.isGuest ? (
               <button
                 type="button"
