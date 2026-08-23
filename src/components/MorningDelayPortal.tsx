@@ -122,6 +122,12 @@ export default function MorningDelayPortal({
   const [tableFilterReason, setTableFilterReason] = useState<string>("all");
   const [copiedSummary, setCopiedSummary] = useState<boolean>(false);
 
+  // Custom In-App Confirmation Modal for deleting delays (avoiding blocked window.confirm in iframes)
+  const [confirmDeleteState, setConfirmDeleteState] = useState<{
+    recordId: string;
+    studentName: string;
+  } | null>(null);
+
   // Save recorder name to localStorage
   useEffect(() => {
     if (recorderName) {
@@ -262,16 +268,24 @@ export default function MorningDelayPortal({
     }
   };
 
-  // Delete Record Handler with optimistic instant UI update
-  const handleDeleteRecord = async (recordId: string, studentName?: string) => {
-    if (!window.confirm(`هل أنت متأكد من حذف تسجيل تأخر الطالب ${studentName ? `"${studentName}"` : ""}؟`)) {
-      return;
-    }
+  // Delete Record Handler - opens custom in-app confirmation modal
+  const handleDeleteRecord = (recordId: string, studentName?: string) => {
+    setConfirmDeleteState({
+      recordId,
+      studentName: studentName || "الطالب"
+    });
+  };
+
+  // Execution of the confirmed deletion
+  const executeConfirmDelete = async () => {
+    if (!confirmDeleteState) return;
+    const { recordId, studentName } = confirmDeleteState;
+    setConfirmDeleteState(null);
 
     // Optimistic instant remove from UI (0ms delay)
     setRecords(prev => prev.filter(r => r.id !== recordId));
-    setSaveToast("تم حذف السجل بنجاح");
-    setTimeout(() => setSaveToast(null), 2000);
+    setSaveToast(`تم حذف وإلغاء تسجيل تأخر (${studentName}) بنجاح`);
+    setTimeout(() => setSaveToast(null), 2500);
 
     try {
       await deleteMorningDelayRecord(recordId);
@@ -300,6 +314,19 @@ export default function MorningDelayPortal({
       return true;
     });
   }, [records, tableSearch, tableFilterGrade, tableFilterReason]);
+
+  // Formatted date in Arabic (e.g. الأحد، ٢٣ أغسطس)
+  const formattedArabicDate = useMemo(() => {
+    try {
+      if (!selectedDate) return "";
+      const [year, month, day] = selectedDate.split("-").map(Number);
+      const dateObj = new Date(year, month - 1, day);
+      const options: Intl.DateTimeFormatOptions = { weekday: "long", day: "numeric", month: "long" };
+      return dateObj.toLocaleDateString("ar-SA", options);
+    } catch {
+      return selectedDate;
+    }
+  }, [selectedDate]);
 
   // Statistics summary for current day
   const stats = useMemo(() => {
@@ -356,73 +383,64 @@ export default function MorningDelayPortal({
         </div>
       )}
 
-      {/* 1. PORTAL HERO HEADER */}
-      <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 rounded-3xl p-5 md:p-6 text-white shadow-xl shadow-amber-950/15 relative overflow-hidden">
-        {/* Subtle decorative circles */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl pointer-events-none"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-amber-400/20 rounded-full -ml-16 -mb-16 blur-xl pointer-events-none"></div>
+      {/* 1. PORTAL HERO HEADER (Matching screenshot layout with morning delay amber/warm palette) */}
+      <div className="text-center relative bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 text-white rounded-2xl md:rounded-3xl p-5 md:p-6 shadow-md overflow-hidden border border-amber-900/60">
+        {/* Subtle decorative background circles */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 pointer-events-none"></div>
+        <div className="absolute bottom-0 left-0 w-32 h-32 bg-amber-400/10 rounded-full -ml-10 -mb-10 pointer-events-none"></div>
+        
+        {/* Main School Name (Bold, Golden/Amber Yellow) */}
+        <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-amber-300 mb-1 tracking-wide">
+          {schoolName || "ام الحمام الثانوية"}
+        </h1>
 
-        <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-amber-100 text-xs font-extrabold border border-white/20">
-              <SunMedium className="w-3.5 h-3.5 text-amber-200" />
-              <span>{schoolName ? `بوابة ${schoolName}` : "بوابة الرصد الميداني"}</span>
-            </div>
-            <h1 className="text-xl md:text-2xl font-black tracking-tight flex items-center gap-2.5">
-              <Clock className="w-6 h-6 text-amber-200" />
-              <span>بوابة تسجيل التأخر الصباحي</span>
-            </h1>
+        {/* Subtitle with icon */}
+        <div className="flex items-center justify-center gap-1.5 text-amber-100 font-bold text-xs md:text-sm mb-3">
+          <span>نظام تسجيل التأخر الصباحي</span>
+          <span>⏰</span>
+        </div>
+
+        {/* Date Pill / Badge (Centered pill matching screenshot) */}
+        <div className="inline-flex items-center gap-2 bg-black/25 hover:bg-black/35 backdrop-blur-md text-white font-bold px-3.5 sm:px-4 py-1.5 rounded-full text-xs md:text-sm border border-white/15 shadow-inner transition-all">
+          <button
+            type="button"
+            onClick={() => handleDateShift(1)}
+            className="p-1 hover:bg-white/20 rounded-full transition cursor-pointer text-amber-200"
+            title="اليوم التالي"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="flex items-center gap-1.5 cursor-pointer relative px-1">
+            <span className="text-sm">🗓️</span>
+            <span className="font-extrabold text-amber-50">{formattedArabicDate || "اليوم"}</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              title="تغيير التاريخ"
+            />
           </div>
 
-          {/* Quick Date Control */}
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-            {/* Date Picker Bar */}
-            <div className="flex items-center bg-white/20 backdrop-blur-md border border-white/25 rounded-2xl p-1 text-white shadow-inner">
-              <button
-                type="button"
-                onClick={() => handleDateShift(1)}
-                className="p-1.5 hover:bg-white/20 rounded-xl transition cursor-pointer"
-                title="اليوم التالي"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+          <button
+            type="button"
+            onClick={() => handleDateShift(-1)}
+            className="p-1 hover:bg-white/20 rounded-full transition cursor-pointer text-amber-200"
+            title="اليوم السابق"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
 
-              <div className="px-2.5 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-amber-200" />
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="bg-transparent text-xs font-black text-white focus:outline-none cursor-pointer text-center"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => handleDateShift(-1)}
-                className="p-1.5 hover:bg-white/20 rounded-xl transition cursor-pointer"
-                title="اليوم السابق"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              {!isToday && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(getTodayDateString())}
-                  className="mr-1 px-2 py-1 bg-amber-400 text-amber-950 text-[10px] font-black rounded-lg hover:bg-amber-300 transition cursor-pointer"
-                >
-                  اليوم
-                </button>
-              )}
-            </div>
-
-            {/* Total count badge */}
-            <div className="bg-white/20 backdrop-blur-md rounded-2xl px-3.5 py-1.5 border border-white/20 text-center shrink-0">
-              <span className="text-[10px] font-bold text-amber-100 ml-1.5">المتأخرون:</span>
-              <span className="text-base font-black text-white">{stats.total}</span>
-            </div>
-          </div>
+          {!isToday && (
+            <button
+              type="button"
+              onClick={() => setSelectedDate(getTodayDateString())}
+              className="mr-1 px-2 py-0.5 bg-amber-400 text-amber-950 text-[10px] font-black rounded-full hover:bg-amber-300 transition cursor-pointer"
+            >
+              اليوم
+            </button>
+          )}
         </div>
       </div>
 
@@ -614,7 +632,10 @@ export default function MorningDelayPortal({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (rec) handleDeleteRecord(rec.id, st.name);
+                                    const currentRec = rec || records.find(r => r.studentId === st.id);
+                                    if (currentRec) {
+                                      handleDeleteRecord(currentRec.id, st.name);
+                                    }
                                   }}
                                   className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-xl transition cursor-pointer"
                                   title="إلغاء تسجيل التأخر"
@@ -671,7 +692,10 @@ export default function MorningDelayPortal({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (rec) handleDeleteRecord(rec.id, st.name);
+                                    const currentRec = rec || records.find(r => r.studentId === st.id);
+                                    if (currentRec) {
+                                      handleDeleteRecord(currentRec.id, st.name);
+                                    }
                                   }}
                                   className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
                                   title="حذف تسجيل التأخر"
@@ -873,6 +897,41 @@ export default function MorningDelayPortal({
           </div>
         )}
       </div>
+
+      {/* Custom Confirmation Modal for Deleting Delays */}
+      {confirmDeleteState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-slate-100 text-center space-y-4 animate-in zoom-in-95 duration-150" dir="rtl">
+            <div className="w-14 h-14 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs border border-rose-200">
+              <Trash2 className="w-7 h-7" />
+            </div>
+            <div className="space-y-1.5">
+              <h4 className="text-base font-black text-slate-800">إلغاء وحذف تسجيل التأخر</h4>
+              <p className="text-xs text-slate-500 font-bold leading-relaxed">
+                هل أنت متأكد من رغبتك في حذف تسجيل تأخر الطالب{" "}
+                <span className="text-rose-700 font-black">"{confirmDeleteState.studentName}"</span>؟
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={executeConfirmDelete}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black py-2.5 px-4 rounded-xl text-xs transition cursor-pointer shadow-sm shadow-rose-600/30 flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>تأكيد الحذف</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteState(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-black py-2.5 px-4 rounded-xl text-xs transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

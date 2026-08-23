@@ -1,6 +1,11 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+
 // Explicit Firebase Project Configuration provided by user
 export const firebaseConfig = {
   apiKey: "AIzaSyCWABVdUWYt49PQXT1duAttR0ql8043yNs",
@@ -12,11 +17,15 @@ export const firebaseConfig = {
   measurementId: "G-GBSB6SX96T"
 };
 
-// Initialize Firebase
+// Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with robust connection settings (auto-detect long-polling and resilient transport)
+// Initialize Firestore with IndexedDB local persistence and multi-tab sync
+// This prevents quota exhaustion by serving reads directly from the IndexedDB cache
 export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  }),
   experimentalAutoDetectLongPolling: true,
   ignoreUndefinedProperties: true,
 });
@@ -27,3 +36,4 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
+

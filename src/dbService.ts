@@ -11,7 +11,9 @@ import {
   orderBy, 
   writeBatch,
   serverTimestamp,
-  onSnapshot
+  onSnapshot,
+  disableNetwork,
+  enableNetwork
 } from "firebase/firestore";
 import { db, auth as firebaseAuth } from "./firebase";
 import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, MorningDelayRecord, RegisteredUser } from "./types";
@@ -239,52 +241,112 @@ function getLocalItems(colName: string, uid?: string): any[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(getLocalStorageKey(colName, uid));
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
     
     // Fallback check for legacy un-scoped cache key
     const legacyRaw = localStorage.getItem(`school_offline_cache_${colName}`);
-    return legacyRaw ? JSON.parse(legacyRaw) : [];
+    if (legacyRaw) {
+      const parsedLegacy = JSON.parse(legacyRaw);
+      if (Array.isArray(parsedLegacy)) return parsedLegacy;
+    }
+    return [];
   } catch (e) {
     return [];
   }
 }
 
 export function getLocalCollection<T = any>(colName: string, uid?: string): T[] {
-  return getLocalItems(colName, uid) as T[];
+  const items = getLocalItems(colName, uid);
+  return (Array.isArray(items) ? items : []) as T[];
 }
 
 function setLocalItems(colName: string, items: any[], uid?: string) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(getLocalStorageKey(colName, uid), JSON.stringify(items));
+    const safeItems = Array.isArray(items) ? items : [];
+    localStorage.setItem(getLocalStorageKey(colName, uid), JSON.stringify(safeItems));
   } catch (e) {}
 }
 
 function saveOrUpdateLocalItem(colName: string, item: any, uid?: string) {
+  if (!item) return;
   const items = getLocalItems(colName, uid);
-  const idx = items.findIndex(i => i.id === item.id);
+  const safeItems = Array.isArray(items) ? [...items] : [];
+  const idx = safeItems.findIndex(i => i && i.id === item.id);
   if (idx >= 0) {
-    items[idx] = { ...items[idx], ...item };
+    safeItems[idx] = { ...safeItems[idx], ...item };
   } else {
-    items.push(item);
+    safeItems.push(item);
   }
-  setLocalItems(colName, items, uid);
+  setLocalItems(colName, safeItems, uid);
+  notifyCollectionSubscribers(colName, safeItems);
 }
 
 function removeLocalItem(colName: string, id: string, uid?: string) {
   const items = getLocalItems(colName, uid);
-  const filtered = items.filter(i => i.id !== id);
+  const safeItems = Array.isArray(items) ? items : [];
+  const filtered = safeItems.filter(i => i && i.id !== id);
   setLocalItems(colName, filtered, uid);
+  notifyCollectionSubscribers(colName, filtered);
 }
 
 function removeLocalItemsBy(colName: string, predicate: (item: any) => boolean, uid?: string) {
   const items = getLocalItems(colName, uid);
-  const filtered = items.filter(i => !predicate(i));
+  const safeItems = Array.isArray(items) ? items : [];
+  const filtered = safeItems.filter(i => i && !predicate(i));
   setLocalItems(colName, filtered, uid);
+  notifyCollectionSubscribers(colName, filtered);
 }
 
 function generateLocalId(prefix: string = "id"): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// Multiplexed Collection Subscriptions Hub
+interface CollectionHub {
+  unsub: (() => void) | null;
+  callbacks: Set<(items: any[]) => void>;
+  latestData: any[];
+  lastUpdated: number;
+  cleanupTimer: any;
+}
+
+const collectionHubs = new Map<string, CollectionHub>();
+
+function getCollectionHub(colName: string): CollectionHub {
+  let hub = collectionHubs.get(colName);
+  if (!hub) {
+    hub = {
+      unsub: null,
+      callbacks: new Set(),
+      latestData: [],
+      lastUpdated: 0,
+      cleanupTimer: null
+    };
+    collectionHubs.set(colName, hub);
+  }
+  return hub;
+}
+
+function notifyCollectionSubscribers(colName: string, items?: any[]) {
+  const hub = collectionHubs.get(colName);
+  if (!hub) return;
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
+  
+  const rawList = Array.isArray(items) ? items : getLocalItems(colName, currentUid);
+  const safeList = Array.isArray(rawList) ? rawList : [];
+  const dataToBroadcast = safeList.filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  
+  hub.latestData = dataToBroadcast;
+  hub.lastUpdated = Date.now();
+  hub.callbacks.forEach(cb => {
+    try { cb(dataToBroadcast); } catch (_) {}
+  });
 }
 
 // Helper to check if a document belongs to a specific user/school
@@ -347,12 +409,14 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     const urlParams = new URLSearchParams(window.location.search);
     let urlOwner = (urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid") || "").trim().toLowerCase();
     let urlEmail = (urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail") || "").trim().toLowerCase();
+    let urlSchool = (urlParams.get("school") || urlParams.get("schoolName") || "").trim().toLowerCase();
 
-    if ((!urlOwner || !urlEmail) && window.location.hash.includes("?")) {
+    if ((!urlOwner || !urlEmail || !urlSchool) && window.location.hash.includes("?")) {
       const hashIdx = window.location.hash.indexOf("?");
       const hashParams = new URLSearchParams(window.location.hash.substring(hashIdx));
       if (!urlOwner) urlOwner = (hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid") || "").trim().toLowerCase();
       if (!urlEmail) urlEmail = (hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail") || "").trim().toLowerCase();
+      if (!urlSchool) urlSchool = (hashParams.get("school") || hashParams.get("schoolName") || "").trim().toLowerCase();
     }
 
     if (urlOwner && (docUid === urlOwner || docEmail === urlOwner || docEmail.includes(urlOwner) || docUid.includes(urlOwner))) {
@@ -360,6 +424,10 @@ export function isDocBelongingToUser(data: any, currentUid: string, currentEmail
     }
     if (urlEmail && (docEmail === urlEmail || docUid === urlEmail || docEmail.includes(urlEmail) || docUid.includes(urlEmail))) {
       return true;
+    }
+    if (urlSchool) {
+      if (data.schoolName && String(data.schoolName).trim().toLowerCase() === urlSchool) return true;
+      if (data.school && String(data.school).trim().toLowerCase() === urlSchool) return true;
     }
   }
 
@@ -548,14 +616,87 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
   }
 }
 
+// Quota and network protection state
+let quotaExhaustedUntil = 0;
+if (typeof window !== "undefined") {
+  try {
+    const storedUntil = localStorage.getItem("firebase_quota_exhausted_until");
+    if (storedUntil) {
+      const parsed = parseInt(storedUntil, 10);
+      if (!isNaN(parsed) && parsed > Date.now()) {
+        quotaExhaustedUntil = parsed;
+      }
+    }
+  } catch (_) {}
+}
+
+let isNetworkDisabled = false;
+
+export function isQuotaExhausted(): boolean {
+  if (quotaExhaustedUntil > 0 && Date.now() < quotaExhaustedUntil) {
+    return true;
+  }
+  return false;
+}
+
+export function markQuotaExhausted() {
+  // Back off from triggering network queries for 15 minutes to avoid overloading or logging loops
+  quotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem("firebase_quota_exhausted_until", String(quotaExhaustedUntil));
+      window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: true } }));
+    } catch (_) {}
+  }
+
+  // Teardown all active hub listeners immediately
+  collectionHubs.forEach(hub => {
+    if (hub.unsub) {
+      try { hub.unsub(); } catch (_) {}
+      hub.unsub = null;
+    }
+  });
+
+  if (!isNetworkDisabled) {
+    isNetworkDisabled = true;
+    try {
+      disableNetwork(db).catch(() => {});
+    } catch (_) {}
+    // Automatically re-enable network in background after backoff period
+    setTimeout(() => {
+      if (Date.now() >= quotaExhaustedUntil) {
+        isNetworkDisabled = false;
+        try {
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("firebase_quota_exhausted_until");
+            window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: false } }));
+          }
+          enableNetwork(db).catch(() => {});
+        } catch (_) {}
+      }
+    }, 15 * 60 * 1000);
+  }
+}
+
 // Helper to fetch entire collection and filter client-side based on strict multi-tenant user isolation
 async function fetchAndFilterCollection(colName: string): Promise<any[]> {
   const eff = getEffectiveUidAndEmail();
   const currentUid = eff.uid;
   const currentEmail = eff.email?.toLowerCase() || "";
 
-  // Load from local storage cache first as fallback
-  const localList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  // 1. Check in-memory collection hub first
+  const hub = collectionHubs.get(colName);
+  if (hub && Array.isArray(hub.latestData) && hub.latestData.length > 0 && Date.now() - hub.lastUpdated < 60000) {
+    return hub.latestData;
+  }
+
+  // 2. Load from local storage cache
+  const rawLocal = getLocalItems(colName, currentUid);
+  const localList = Array.isArray(rawLocal) ? rawLocal.filter(item => isDocBelongingToUser(item, currentUid, currentEmail)) : [];
+
+  if (isQuotaExhausted()) {
+    return localList;
+  }
 
   try {
     const querySnapshot = await getDocs(collection(db, colName));
@@ -570,12 +711,18 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
       }
     });
 
-    // Update local cache with authoritative Firestore data
+    // Update local cache and hub with authoritative Firestore data
     setLocalItems(colName, results, currentUid);
+    const targetHub = getCollectionHub(colName);
+    targetHub.latestData = results;
+    targetHub.lastUpdated = Date.now();
 
     return results;
   } catch (err: any) {
-    // Graceful fallback to local cache on permission denial or offline
+    if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
+      markQuotaExhausted();
+    }
+    // Graceful fallback to local cache on permission denial, quota limit, or offline
     return localList;
   }
 }
@@ -583,9 +730,10 @@ async function fetchAndFilterCollection(colName: string): Promise<any[]> {
 // Fetch All Grades
 export async function getGrades(): Promise<Grade[]> {
   const rawGrades = (await fetchAndFilterCollection(GRADES_COLL)) as Grade[];
+  const safeGrades = Array.isArray(rawGrades) ? rawGrades : [];
   const seen = new Set<string>();
   const uniqueGrades: Grade[] = [];
-  for (const g of rawGrades) {
+  for (const g of safeGrades) {
     if (!g || !g.id) continue;
     const key = g.name?.trim();
     if (!seen.has(key)) {
@@ -599,9 +747,10 @@ export async function getGrades(): Promise<Grade[]> {
 // Fetch All Classes
 export async function getClasses(): Promise<Class[]> {
   const rawClasses = (await fetchAndFilterCollection(CLASSES_COLL)) as Class[];
+  const safeClasses = Array.isArray(rawClasses) ? rawClasses : [];
   const seen = new Set<string>();
   const uniqueClasses: Class[] = [];
-  for (const c of rawClasses) {
+  for (const c of safeClasses) {
     if (!c || !c.id) continue;
     const key = `${c.gradeId}_${c.name?.trim()}`;
     if (!seen.has(key)) {
@@ -614,18 +763,21 @@ export async function getClasses(): Promise<Class[]> {
 
 // Fetch All Teachers
 export async function getTeachers(): Promise<Teacher[]> {
-  return fetchAndFilterCollection(TEACHERS_COLL) as Promise<Teacher[]>;
+  const list = await fetchAndFilterCollection(TEACHERS_COLL);
+  return Array.isArray(list) ? (list as Teacher[]) : [];
 }
 
 // Fetch All Students
 export async function getStudents(): Promise<Student[]> {
-  return fetchAndFilterCollection(STUDENTS_COLL) as Promise<Student[]>;
+  const list = await fetchAndFilterCollection(STUDENTS_COLL);
+  return Array.isArray(list) ? (list as Student[]) : [];
 }
 
 // Fetch Students by Grade and Class
 export async function getStudentsByClass(gradeId: string, classId: string): Promise<Student[]> {
   const students = await fetchAndFilterCollection(STUDENTS_COLL);
-  return students.filter(s => s.gradeId === gradeId && s.classId === classId) as Student[];
+  const safeStudents = Array.isArray(students) ? students : [];
+  return safeStudents.filter(s => s && s.gradeId === gradeId && s.classId === classId) as Student[];
 }
 
 // Fetch Attendance Record for a specific date, period, grade, class
@@ -640,7 +792,7 @@ export async function getAttendanceRecord(
   return found ? (found as AttendanceRecord) : null;
 }
 
-// Subscribe to a specific Attendance Record in real-time
+// Subscribe to a specific Attendance Record in real-time (routed via multiplexed collection hub)
 export function subscribeToAttendanceRecord(
   date: string,
   period: string,
@@ -649,34 +801,13 @@ export function subscribeToAttendanceRecord(
   callback: (record: AttendanceRecord | null) => void,
   onError?: (error: any) => void
 ) {
-  const eff = getEffectiveUidAndEmail();
-  const currentUid = eff.uid;
-  const currentEmail = eff.email;
-
-  const localList = getLocalItems(ATTENDANCE_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
-  const initial = localList.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId) || null;
-  callback(initial);
-
-  try {
-    const q = collection(db, ATTENDANCE_COLL);
-    return onSnapshot(q, (snapshot) => {
-      let found: AttendanceRecord | null = null;
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.date === date && data.period === period && data.gradeId === gradeId && data.classId === classId) {
-          found = { id: docSnap.id, ...data } as AttendanceRecord;
-        }
-      });
-      callback(found);
-    }, (err) => {
-      if (onError) onError(err);
-    });
-  } catch (e) {
-    return () => {};
-  }
+  return subscribeToCollection(ATTENDANCE_COLL, (records) => {
+    const found = records.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId) || null;
+    callback(found);
+  }, onError);
 }
 
-// Save Attendance Record
+// Save Attendance Record (Ultra-fast instant write with local-first cache + background sync)
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -694,30 +825,100 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     timestamp: Date.now()
   };
 
-  // 1. Save to local storage cache immediately
+  // 1. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
-  // 2. Persist to Firestore with merge
+  // 2. Persist to Firestore asynchronously in background without blocking the UI
+  const docRef = doc(db, ATTENDANCE_COLL, recordId);
+  setDoc(docRef, {
+    ...record,
+    id: recordId,
+    userId: uid,
+    userEmail: email,
+    timestamp: Date.now(),
+    updatedAt: Date.now()
+  }, { merge: true }).catch((err: any) => {
+    console.warn("Background Firestore attendance save notice:", err);
+  });
+}
+
+// Delete entire Attendance Record (Ultra-fast instant local update + background sync)
+export async function deleteAttendanceRecord(id: string): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  removeLocalItem(ATTENDANCE_COLL, id, eff.uid);
+  try {
+    deleteDoc(doc(db, ATTENDANCE_COLL, id)).catch(() => {});
+  } catch (err) {}
+}
+
+// Delete single student absence/late entry from an Attendance Record (Instant 0ms update + background sync)
+export async function deleteAttendanceEntry(recordId: string, studentId: string, isAbsentType: boolean): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
+  if (studentId === "no-absence") {
+    return deleteAttendanceRecord(recordId);
+  }
+
+  // 1. Update local storage cache immediately (0ms)
+  const items = getLocalItems(ATTENDANCE_COLL, uid);
+  const idx = items.findIndex(r => r.id === recordId);
+  let updatedRecord: any = null;
+
+  if (idx >= 0) {
+    const existing = items[idx];
+    let updatedAbsent: string[] = Array.isArray(existing.absent) ? [...existing.absent] : [];
+    let updatedLate: string[] = Array.isArray(existing.late) ? [...existing.late] : [];
+
+    if (isAbsentType) {
+      updatedAbsent = updatedAbsent.filter((id: string) => id !== studentId);
+    } else {
+      updatedLate = updatedLate.filter((id: string) => id !== studentId);
+    }
+
+    const isNoAbsence = updatedAbsent.length === 0 && updatedLate.length === 0;
+
+    updatedRecord = {
+      ...existing,
+      absent: updatedAbsent,
+      late: updatedLate,
+      isNoAbsence,
+      updatedAt: Date.now()
+    };
+
+    items[idx] = updatedRecord;
+    setLocalItems(ATTENDANCE_COLL, items, uid);
+    notifyCollectionSubscribers(ATTENDANCE_COLL, items);
+  }
+
+  // 2. Persist to Firestore in background asynchronously
   try {
     const docRef = doc(db, ATTENDANCE_COLL, recordId);
-    await setDoc(docRef, {
-      ...record,
-      id: recordId,
-      userId: uid,
-      userEmail: email,
-      timestamp: Date.now(),
-      updatedAt: Date.now()
-    }, { merge: true });
-  } catch (err: any) {
-    // Firestore error handled gracefully
-  }
+    if (updatedRecord) {
+      setDoc(docRef, {
+        absent: updatedRecord.absent,
+        late: updatedRecord.late,
+        isNoAbsence: updatedRecord.isNoAbsence,
+        updatedAt: Date.now()
+      }, { merge: true }).catch(() => {});
+    } else {
+      const { arrayRemove, updateDoc } = await import("firebase/firestore");
+      const field = isAbsentType ? "absent" : "late";
+      updateDoc(docRef, {
+        [field]: arrayRemove(studentId),
+        updatedAt: Date.now()
+      }).catch(() => {});
+    }
+  } catch (err) {}
 }
 
 // Fetch Behavior Records for a student
 export async function getBehaviorRecords(studentId: string): Promise<BehaviorRecord[]> {
   const records = await fetchAndFilterCollection(BEHAVIORS_COLL);
-  const filtered = records.filter(r => r.studentId === studentId) as BehaviorRecord[];
-  return filtered.sort((a, b) => b.date.localeCompare(a.date));
+  const safeRecords = Array.isArray(records) ? records : [];
+  const filtered = safeRecords.filter(r => r && r.studentId === studentId) as BehaviorRecord[];
+  return filtered.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
 // Subscribe to Behavior Records for a student in real-time
@@ -726,38 +927,15 @@ export function subscribeToBehaviorRecords(
   callback: (records: BehaviorRecord[]) => void,
   onError?: (error: any) => void
 ) {
-  const eff = getEffectiveUidAndEmail();
-  const currentUid = eff.uid;
-  const currentEmail = eff.email;
-
-  const localList = getLocalItems(BEHAVIORS_COLL, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && item.studentId === studentId);
-  localList.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  callback(localList);
-
-  try {
-    const q = collection(db, BEHAVIORS_COLL);
-    return onSnapshot(q, (snapshot) => {
-      const records: BehaviorRecord[] = [];
-      const seenIds = new Set<string>();
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (isDocBelongingToUser(data, currentUid, currentEmail) && data.studentId === studentId && !seenIds.has(docSnap.id)) {
-          seenIds.add(docSnap.id);
-          records.push({ id: docSnap.id, ...data } as BehaviorRecord);
-        }
-      });
-      records.sort((a, b) => b.date.localeCompare(a.date));
-      setLocalItems(BEHAVIORS_COLL, records, currentUid);
-      callback(records);
-    }, (err) => {
-      if (onError) onError(err);
-    });
-  } catch (e) {
-    return () => {};
-  }
+  return subscribeToCollection(BEHAVIORS_COLL, (records) => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const filtered = safeRecords.filter(r => r && r.studentId === studentId);
+    filtered.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    callback(filtered);
+  }, onError);
 }
 
-// Save Behavior Record
+// Save Behavior Record (Ultra-fast instant write with local-first cache + background sync)
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -772,31 +950,32 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
     timestamp: Date.now()
   };
 
+  // 1. Instant local update (0ms)
   saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord, uid);
 
-  try {
-    const docRef = doc(db, BEHAVIORS_COLL, newId);
-    await setDoc(docRef, {
-      ...record,
-      id: newId,
-      userId: uid,
-      userEmail: email,
-      timestamp: Date.now(),
-      updatedAt: Date.now()
-    }, { merge: true });
-    return newId;
-  } catch (err) {
-    return newId;
-  }
+  // 2. Background Firestore write
+  const docRef = doc(db, BEHAVIORS_COLL, newId);
+  setDoc(docRef, {
+    ...record,
+    id: newId,
+    userId: uid,
+    userEmail: email,
+    timestamp: Date.now(),
+    updatedAt: Date.now()
+  }, { merge: true }).catch((err) => {
+    if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
+      markQuotaExhausted();
+    }
+  });
+
+  return newId;
 }
 
-// Delete Behavior Record
+// Delete Behavior Record (Instant local purge + non-blocking background delete)
 export async function deleteBehaviorRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(BEHAVIORS_COLL, id, eff.uid);
-  try {
-    await deleteDoc(doc(db, BEHAVIORS_COLL, id));
-  } catch (err) {}
+  deleteDoc(doc(db, BEHAVIORS_COLL, id)).catch(() => {});
 }
 
 // --- MORNING DELAY (التأخر الصباحي) ---
@@ -804,10 +983,11 @@ export async function deleteBehaviorRecord(id: string): Promise<void> {
 // Fetch Morning Delay Records (optionally filtered by date)
 export async function getMorningDelayRecords(date?: string): Promise<MorningDelayRecord[]> {
   const records = (await fetchAndFilterCollection(MORNING_DELAYS_COLL)) as MorningDelayRecord[];
+  const safeRecords = Array.isArray(records) ? records : [];
   if (date) {
-    return records.filter(r => r.date === date).sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+    return safeRecords.filter(r => r && r.date === date).sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
   }
-  return records.sort((a, b) => b.date.localeCompare(a.date));
+  return safeRecords.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
 // Subscribe to Morning Delay Records in real-time
@@ -816,40 +996,18 @@ export function subscribeToMorningDelayRecords(
   callback: (records: MorningDelayRecord[]) => void,
   onError?: (error: any) => void
 ) {
-  const eff = getEffectiveUidAndEmail();
-  const currentUid = eff.uid;
-  const currentEmail = eff.email;
-
-  const localList = getLocalItems(MORNING_DELAYS_COLL).filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && (!date || item.date === date));
-  localList.sort((a, b) => {
-    if (a.date !== b.date) return (b.date || "").localeCompare(a.date || "");
-    return (b.arrivalTime || "").localeCompare(a.arrivalTime || "");
-  });
-  callback(localList);
-
-  try {
-    const q = collection(db, MORNING_DELAYS_COLL);
-    return onSnapshot(q, (snapshot) => {
-      const records: MorningDelayRecord[] = [];
-      const seenIds = new Set<string>();
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (isDocBelongingToUser(data, currentUid, currentEmail) && (!date || data.date === date) && !seenIds.has(docSnap.id)) {
-          seenIds.add(docSnap.id);
-          records.push({ id: docSnap.id, ...data } as MorningDelayRecord);
-        }
-      });
-      records.sort((a, b) => {
-        if (a.date !== b.date) return b.date.localeCompare(a.date);
-        return (b.arrivalTime || "").localeCompare(a.arrivalTime || "");
-      });
-      callback(records);
-    }, (err) => {
-      if (onError) onError(err);
+  return subscribeToCollection(MORNING_DELAYS_COLL, (records) => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    let filtered = safeRecords;
+    if (date) {
+      filtered = safeRecords.filter(r => r && r.date === date);
+    }
+    filtered.sort((a, b) => {
+      if (a.date !== b.date) return (b.date || "").localeCompare(a.date || "");
+      return (a.arrivalTime || "").localeCompare(b.arrivalTime || "");
     });
-  } catch (e) {
-    return () => {};
-  }
+    callback(filtered);
+  }, onError);
 }
 
 // Save Morning Delay Record (Ultra-fast instant write with local-first optimistic cache)
@@ -922,12 +1080,11 @@ export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "
   } catch (err) {}
 }
 
-// Delete Morning Delay Record
+// Delete Morning Delay Record (Instant local purge + non-blocking background delete)
 export async function deleteMorningDelayRecord(id: string): Promise<void> {
-  removeLocalItem(MORNING_DELAYS_COLL, id);
-  try {
-    await deleteDoc(doc(db, MORNING_DELAYS_COLL, id));
-  } catch (err) {}
+  const eff = getEffectiveUidAndEmail();
+  removeLocalItem(MORNING_DELAYS_COLL, id, eff.uid);
+  deleteDoc(doc(db, MORNING_DELAYS_COLL, id)).catch(() => {});
 }
 
 // Fetch all morning delay records for stats/reports
@@ -938,8 +1095,9 @@ export async function getAllMorningDelayRecords(): Promise<MorningDelayRecord[]>
 // Subscribe to all morning delay records
 export function subscribeToAllMorningDelayRecords(callback: (records: MorningDelayRecord[]) => void, onError?: (error: any) => void) {
   return subscribeToCollection(MORNING_DELAYS_COLL, (records) => {
-    records.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    callback(records);
+    const safeRecords = Array.isArray(records) ? records : [];
+    safeRecords.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    callback(safeRecords);
   }, onError);
 }
 
@@ -1044,37 +1202,33 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
   return results;
 }
 
-// Delete Grade
+// Delete Grade (Instant 0ms local purge + non-blocking background cascade)
 export async function deleteGrade(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
 
-  // 1. Delete from local storage cache immediately
-  removeLocalItem(GRADES_COLL, id);
-  removeLocalItemsBy(CLASSES_COLL, (c) => c.gradeId === id);
-  removeLocalItemsBy(STUDENTS_COLL, (s) => s.gradeId === id);
+  // 1. Gather all associated class & student IDs from local cache before removal
+  const localClasses = getLocalItems(CLASSES_COLL, uid);
+  const classIdsToDelete = localClasses.filter(c => c.gradeId === id).map(c => c.id);
+  
+  const localStudents = getLocalItems(STUDENTS_COLL, uid);
+  const studentIdsToDelete = localStudents.filter(s => s.gradeId === id || classIdsToDelete.includes(s.classId)).map(s => s.id);
 
-  // 2. Delete from Firestore
-  try {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, GRADES_COLL, id));
-    
-    // Clean up associated classes
-    const classesQuery = query(collection(db, CLASSES_COLL), where("gradeId", "==", id));
-    const classesSnap = await getDocs(classesQuery);
-    classesSnap.docs.forEach(cDoc => {
-      batch.delete(doc(db, CLASSES_COLL, cDoc.id));
-    });
+  // 2. Delete from local storage cache immediately (0ms instant UI update)
+  removeLocalItem(GRADES_COLL, id, uid);
+  removeLocalItemsBy(CLASSES_COLL, (c) => c.gradeId === id, uid);
+  removeLocalItemsBy(STUDENTS_COLL, (s) => s.gradeId === id || classIdsToDelete.includes(s.classId), uid);
 
-    // Clean up associated students
-    const studentsQuery = query(collection(db, STUDENTS_COLL), where("gradeId", "==", id));
-    const studentsSnap = await getDocs(studentsQuery);
-    studentsSnap.docs.forEach(sDoc => {
-      batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
-    });
-
-    await batch.commit();
-  } catch (err: any) {}
+  // 3. Delete from Firestore asynchronously in background without blocking the UI
+  (async () => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, GRADES_COLL, id));
+      classIdsToDelete.forEach(cId => batch.delete(doc(db, CLASSES_COLL, cId)));
+      studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
+      await batch.commit().catch(() => {});
+    } catch (err: any) {}
+  })();
 }
 
 // Add Class (Instant optimistic return + background persistence)
@@ -1182,23 +1336,28 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
   return results;
 }
 
-// Delete Class
+// Delete Class (Instant 0ms local purge + non-blocking background cascade)
 export async function deleteClass(id: string): Promise<void> {
-  removeLocalItem(CLASSES_COLL, id);
-  removeLocalItemsBy(STUDENTS_COLL, (s) => s.classId === id);
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
 
-  try {
-    const batch = writeBatch(db);
-    batch.delete(doc(db, CLASSES_COLL, id));
-    
-    const studentsQuery = query(collection(db, STUDENTS_COLL), where("classId", "==", id));
-    const studentsSnap = await getDocs(studentsQuery);
-    studentsSnap.docs.forEach(sDoc => {
-      batch.delete(doc(db, STUDENTS_COLL, sDoc.id));
-    });
-    
-    await batch.commit();
-  } catch (err: any) {}
+  // 1. Gather all student IDs in this class before removal
+  const localStudents = getLocalItems(STUDENTS_COLL, uid);
+  const studentIdsToDelete = localStudents.filter(s => s.classId === id).map(s => s.id);
+
+  // 2. Delete from local cache immediately (0ms instant UI update)
+  removeLocalItem(CLASSES_COLL, id, uid);
+  removeLocalItemsBy(STUDENTS_COLL, (s) => s.classId === id, uid);
+
+  // 3. Asynchronous Firestore batch delete
+  (async () => {
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, CLASSES_COLL, id));
+      studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
+      await batch.commit().catch(() => {});
+    } catch (err: any) {}
+  })();
 }
 
 // Add Teacher
@@ -1274,24 +1433,26 @@ export async function addTeachersBatch(names: string[]): Promise<Teacher[]> {
   return toCreate;
 }
 
-// Delete Teacher
+// Delete Teacher (Instant 0ms local purge + non-blocking background delete)
 export async function deleteTeacher(id: string): Promise<void> {
-  removeLocalItem(TEACHERS_COLL, id);
-  try {
-    await deleteDoc(doc(db, TEACHERS_COLL, id));
-  } catch (err: any) {}
+  const eff = getEffectiveUidAndEmail();
+  removeLocalItem(TEACHERS_COLL, id, eff.uid);
+  deleteDoc(doc(db, TEACHERS_COLL, id)).catch(() => {});
 }
 
-// Delete Multiple Teachers in a Batch
+// Delete Multiple Teachers in a Batch (Instant 0ms local purge + non-blocking background delete)
 export async function deleteTeachersBatch(ids: string[]): Promise<void> {
-  ids.forEach(id => removeLocalItem(TEACHERS_COLL, id));
-  try {
-    const batch = writeBatch(db);
-    ids.forEach(id => {
-      batch.delete(doc(db, TEACHERS_COLL, id));
-    });
-    await batch.commit();
-  } catch (err: any) {}
+  const eff = getEffectiveUidAndEmail();
+  ids.forEach(id => removeLocalItem(TEACHERS_COLL, id, eff.uid));
+  (async () => {
+    try {
+      const batch = writeBatch(db);
+      ids.forEach(id => {
+        batch.delete(doc(db, TEACHERS_COLL, id));
+      });
+      await batch.commit().catch(() => {});
+    } catch (err: any) {}
+  })();
 }
 
 // Add Student (Deduplicates automatically by classId and normalized student name)
@@ -1437,24 +1598,26 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
   return toCreate;
 }
 
-// Delete Student
+// Delete Student (Instant 0ms local purge + non-blocking background delete)
 export async function deleteStudent(id: string): Promise<void> {
-  removeLocalItem(STUDENTS_COLL, id);
-  try {
-    await deleteDoc(doc(db, STUDENTS_COLL, id));
-  } catch (err: any) {}
+  const eff = getEffectiveUidAndEmail();
+  removeLocalItem(STUDENTS_COLL, id, eff.uid);
+  deleteDoc(doc(db, STUDENTS_COLL, id)).catch(() => {});
 }
 
-// Delete Multiple Students in a Batch
+// Delete Multiple Students in a Batch (Instant 0ms local purge + non-blocking background delete)
 export async function deleteStudentsBatch(ids: string[]): Promise<void> {
-  ids.forEach(id => removeLocalItem(STUDENTS_COLL, id));
-  try {
-    const batch = writeBatch(db);
-    ids.forEach(id => {
-      batch.delete(doc(db, STUDENTS_COLL, id));
-    });
-    await batch.commit();
-  } catch (err: any) {}
+  const eff = getEffectiveUidAndEmail();
+  ids.forEach(id => removeLocalItem(STUDENTS_COLL, id, eff.uid));
+  (async () => {
+    try {
+      const batch = writeBatch(db);
+      ids.forEach(id => {
+        batch.delete(doc(db, STUDENTS_COLL, id));
+      });
+      await batch.commit().catch(() => {});
+    } catch (err: any) {}
+  })();
 }
 
 // Fetch all attendance for statistics
@@ -1464,17 +1627,22 @@ export async function getAllAttendanceRecords(): Promise<AttendanceRecord[]> {
 
 // Subscribe to all attendance for real-time statistics
 export function subscribeToAllAttendanceRecords(callback: (records: AttendanceRecord[]) => void, onError?: (error: any) => void) {
-  return subscribeToCollection(ATTENDANCE_COLL, callback, onError);
+  return subscribeToCollection(ATTENDANCE_COLL, (data) => {
+    callback(Array.isArray(data) ? data : []);
+  }, onError);
 }
 
 // Fetch all behavior records for statistics
 export async function getAllBehaviorRecords(): Promise<BehaviorRecord[]> {
-  return fetchAndFilterCollection(BEHAVIORS_COLL) as Promise<BehaviorRecord[]>;
+  const list = await fetchAndFilterCollection(BEHAVIORS_COLL);
+  return Array.isArray(list) ? (list as BehaviorRecord[]) : [];
 }
 
 // Subscribe to all behavior records for real-time statistics
 export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord[]) => void, onError?: (error: any) => void) {
-  return subscribeToCollection(BEHAVIORS_COLL, callback, onError);
+  return subscribeToCollection(BEHAVIORS_COLL, (data) => {
+    callback(Array.isArray(data) ? data : []);
+  }, onError);
 }
 
 // --- DATABASE AUTO-SEEDING ---
@@ -1535,7 +1703,7 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
   } catch (err) {}
 }
 
-// Generic live subscription helper matching fetchAndFilterCollection logic
+// Generic live subscription helper using collection multiplexing hub
 function subscribeToCollection(colName: string, callback: (data: any[]) => void, onError?: (error: any) => void) {
   const eff = getEffectiveUidAndEmail();
   if (!eff) {
@@ -1545,46 +1713,108 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
   const currentUid = eff.uid;
   const currentEmail = eff.email;
 
-  // Immediately emit cached items so UI is instantly populated
-  const localList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
-  if (localList.length > 0) {
-    callback(localList);
+  const hub = getCollectionHub(colName);
+
+  // If there's a pending teardown timer, cancel it
+  if (hub.cleanupTimer) {
+    clearTimeout(hub.cleanupTimer);
+    hub.cleanupTimer = null;
   }
 
+  // Register callback
+  hub.callbacks.add(callback);
+
+  // 1. Immediately provide current cached state without waiting for network
+  const rawLocal = getLocalItems(colName, currentUid);
+  const safeLocal = Array.isArray(rawLocal) ? rawLocal.filter(item => isDocBelongingToUser(item, currentUid, currentEmail)) : [];
+  const localList = Array.isArray(hub.latestData) && hub.latestData.length > 0 
+    ? hub.latestData 
+    : safeLocal;
+  
+  if (!Array.isArray(hub.latestData) || hub.latestData.length === 0) {
+    hub.latestData = localList;
+  }
   try {
-    const q = collection(db, colName);
-    return onSnapshot(q, (snapshot) => {
-      const results: any[] = [];
-      const seenIds = new Set<string>();
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
-          seenIds.add(docSnap.id);
-          results.push({ id: docSnap.id, ...data });
+    callback(Array.isArray(localList) ? localList : []);
+  } catch (_) {}
+
+  // 2. If quota is exhausted, do not attempt Firestore network connection
+  if (isQuotaExhausted()) {
+    return () => {
+      hub.callbacks.delete(callback);
+    };
+  }
+
+  // 3. Connect to Firestore singleton onSnapshot listener if not already connected
+  if (!hub.unsub) {
+    try {
+      const q = collection(db, colName);
+      hub.unsub = onSnapshot(q, (snapshot) => {
+        const results: any[] = [];
+        const seenIds = new Set<string>();
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
+            seenIds.add(docSnap.id);
+            results.push({ id: docSnap.id, ...data });
+          }
+        });
+
+        // Update local storage cache
+        setLocalItems(colName, results, currentUid);
+        hub.latestData = results;
+        hub.lastUpdated = Date.now();
+
+        // Broadcast to all active subscribers of this collection
+        hub.callbacks.forEach(cb => {
+          try { cb(results); } catch (_) {}
+        });
+      }, (error: any) => {
+        if (error?.code === "resource-exhausted" || (typeof error?.message === "string" && error.message.toLowerCase().includes("quota"))) {
+          markQuotaExhausted();
+          if (hub.unsub) {
+            try { hub.unsub(); } catch (_) {}
+            hub.unsub = null;
+          }
+        }
+        const fallbackRaw = getLocalItems(colName, currentUid);
+        const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, currentUid, currentEmail)) : [];
+        hub.latestData = fallbackList;
+        hub.callbacks.forEach(cb => {
+          try { cb(fallbackList); } catch (_) {}
+        });
+        if (onError) {
+          try { onError(error); } catch (_) {}
         }
       });
-      
-      // Update local storage cache with authoritative Firestore data
-      setLocalItems(colName, results, currentUid);
-      callback(results);
-    }, (error) => {
-      // On permission or network error, fallback silently to local cache without crashing UI
-      const fallbackList = getLocalItems(colName, currentUid).filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
-      callback(fallbackList);
-      if (onError) onError(error);
-    });
-  } catch (err) {
-    callback(localList);
-    return () => {};
+    } catch (err: any) {
+      if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
+        markQuotaExhausted();
+      }
+    }
   }
+
+  return () => {
+    hub.callbacks.delete(callback);
+    if (hub.callbacks.size === 0) {
+      // Cooldown timer to prevent rapid connect/disconnect churning
+      hub.cleanupTimer = setTimeout(() => {
+        if (hub.callbacks.size === 0 && hub.unsub) {
+          try { hub.unsub(); } catch (_) {}
+          hub.unsub = null;
+        }
+      }, 15000);
+    }
+  };
 }
 
 // Subscribe All Grades in real-time
 export function subscribeToGrades(callback: (grades: Grade[]) => void, onError?: (error: any) => void) {
   return subscribeToCollection(GRADES_COLL, (rawGrades) => {
+    const safeGrades = Array.isArray(rawGrades) ? rawGrades : [];
     const seen = new Set<string>();
     const uniqueGrades: Grade[] = [];
-    for (const g of rawGrades) {
+    for (const g of safeGrades) {
       if (!g || !g.id) continue;
       const key = g.name?.trim();
       if (!seen.has(key)) {
@@ -1599,9 +1829,10 @@ export function subscribeToGrades(callback: (grades: Grade[]) => void, onError?:
 // Subscribe All Classes in real-time
 export function subscribeToClasses(callback: (classes: Class[]) => void, onError?: (error: any) => void) {
   return subscribeToCollection(CLASSES_COLL, (rawClasses) => {
+    const safeClasses = Array.isArray(rawClasses) ? rawClasses : [];
     const seen = new Set<string>();
     const uniqueClasses: Class[] = [];
-    for (const c of rawClasses) {
+    for (const c of safeClasses) {
       if (!c || !c.id) continue;
       const key = `${c.gradeId}_${c.name?.trim()}`;
       if (!seen.has(key)) {
@@ -1615,12 +1846,16 @@ export function subscribeToClasses(callback: (classes: Class[]) => void, onError
 
 // Subscribe All Teachers in real-time
 export function subscribeToTeachers(callback: (teachers: Teacher[]) => void, onError?: (error: any) => void) {
-  return subscribeToCollection(TEACHERS_COLL, callback, onError);
+  return subscribeToCollection(TEACHERS_COLL, (data) => {
+    callback(Array.isArray(data) ? data : []);
+  }, onError);
 }
 
 // Subscribe All Students in real-time
 export function subscribeToStudents(callback: (students: Student[]) => void, onError?: (error: any) => void) {
-  return subscribeToCollection(STUDENTS_COLL, callback, onError);
+  return subscribeToCollection(STUDENTS_COLL, (data) => {
+    callback(Array.isArray(data) ? data : []);
+  }, onError);
 }
 
 // Subscribe School Name in real-time
@@ -1634,29 +1869,23 @@ export function subscribeToSchoolName(callback: (schoolName: string) => void, on
     if (cached) callback(cached);
   }
 
-  try {
-    const q = collection(db, SETTINGS_COLL);
-    return onSnapshot(q, (snapshot) => {
-      let schoolNameVal = "";
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.schoolName && isDocBelongingToUser(data, currentUid, currentEmail)) {
-          schoolNameVal = data.schoolName;
-        } else if (!schoolNameVal && data.schoolName) {
-          schoolNameVal = data.schoolName;
-        }
-      });
-      if (schoolNameVal && typeof window !== "undefined") {
-        localStorage.setItem(`school_name_${currentUid}`, schoolNameVal);
-        localStorage.setItem("school_name_cached", schoolNameVal);
+  return subscribeToCollection(SETTINGS_COLL, (records) => {
+    let schoolNameVal = "";
+    records.forEach(data => {
+      if (data.schoolName && isDocBelongingToUser(data, currentUid, currentEmail)) {
+        schoolNameVal = data.schoolName;
+      } else if (!schoolNameVal && data.schoolName) {
+        schoolNameVal = data.schoolName;
       }
-      callback(schoolNameVal);
-    }, (err) => {
-      if (onError) onError(err);
     });
-  } catch (e) {
-    return () => {};
-  }
+    if (schoolNameVal && typeof window !== "undefined") {
+      localStorage.setItem(`school_name_${currentUid}`, schoolNameVal);
+      localStorage.setItem("school_name_cached", schoolNameVal);
+    }
+    if (schoolNameVal) {
+      callback(schoolNameVal);
+    }
+  }, onError);
 }
 
 // --- REGISTERED USERS SYSTEM ---

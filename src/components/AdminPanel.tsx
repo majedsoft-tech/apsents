@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord } from "../types";
+import { Grade, Class, Teacher, Student, AttendanceRecord, BehaviorRecord, MorningDelayRecord } from "../types";
 import { 
   addGrade, 
   addGradesBatch,
@@ -15,11 +15,17 @@ import {
   deleteStudent,
   deleteStudentsBatch,
   getAllAttendanceRecords,
+  deleteAttendanceRecord,
+  deleteAttendanceEntry,
   getAllBehaviorRecords,
+  deleteBehaviorRecord,
+  getAllMorningDelayRecords,
+  deleteMorningDelayRecord,
   addStudentsBatch,
   addTeachersBatch,
   subscribeToAllAttendanceRecords,
-  subscribeToAllBehaviorRecords
+  subscribeToAllBehaviorRecords,
+  subscribeToAllMorningDelayRecords
 } from "../dbService";
 import { 
   Lock, 
@@ -216,12 +222,19 @@ export default function AdminPanel({
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
-  const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "selected_attendance" | "behavior" | "student_report">("attendance");
+  const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "morning_delay" | "selected_attendance" | "behavior" | "student_report">("attendance");
   const [attendanceViewMode, setAttendanceViewMode] = useState<"list" | "grid">("list");
   const [hasNewBehavior, setHasNewBehavior] = useState<boolean>(false);
   const [newBehaviorIds, setNewBehaviorIds] = useState<string[]>([]);
   const [behaviorSearchFilter, setBehaviorSearchFilter] = useState<string>("");
   const [behaviorDateFilter, setBehaviorDateFilter] = useState<string>("all");
+
+  // States for "التأخر الصباحي" (Morning Delay Tab)
+  const [morningDelaysList, setMorningDelaysList] = useState<MorningDelayRecord[]>([]);
+  const [delayDateFilter, setDelayDateFilter] = useState<string>(getTodayDateString());
+  const [delaySearchFilter, setDelaySearchFilter] = useState<string>("");
+  const [delayGradeFilter, setDelayGradeFilter] = useState<string>("all");
+  const [delayClassFilter, setDelayClassFilter] = useState<string>("all");
 
   const getStoredSeenBehaviorIds = (): Set<string> => {
     try {
@@ -630,6 +643,118 @@ export default function AdminPanel({
     }
   };
 
+  const handlePrintMorningDelays = (filteredList: MorningDelayRecord[]) => {
+    const dateStr = delayDateFilter || getTodayDateString();
+
+    try {
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        const rowsHtml = filteredList.length === 0
+          ? `<tr><td colspan="7" style="text-align:center; padding:25px; color:#64748b; font-weight:bold;">لا يوجد طلاب متأخرين مسجلين لهذا اليوم 👍</td></tr>`
+          : filteredList.map((entry, idx) => `
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px; text-align: center; color: #64748b; font-weight: bold;">${idx + 1}</td>
+                <td style="padding: 10px; font-weight: 800; color: #0f172a;">${entry.studentName || 'طالب'}</td>
+                <td style="padding: 10px; text-align: center; color: #334155; font-weight: 700;">${entry.gradeName || '-'}</td>
+                <td style="padding: 10px; text-align: center; color: #334155; font-weight: 700;">${entry.className || '-'}</td>
+                <td style="padding: 10px; text-align: center; font-weight: 800; color: #b45309; direction: ltr;">${entry.arrivalTime || '-'}</td>
+                <td style="padding: 10px; text-align: center;">
+                  <span style="padding: 3px 10px; border-radius: 9999px; font-size: 11px; font-weight: 800; background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a;">
+                    ${entry.reason || 'بدون عذر'}
+                  </span>
+                </td>
+                <td style="padding: 10px; text-align: center; color: #475569;">${entry.recordedBy || '-'}</td>
+              </tr>
+            `).join("");
+
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html dir="rtl" lang="ar">
+          <head>
+            <meta charset="utf-8">
+            <title>كشف التأخر الصباحي - ${dateStr}</title>
+            <style>
+              @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+              body { font-family: 'Cairo', system-ui, sans-serif; padding: 25px; direction: rtl; text-align: right; background-color: #fff; color: #1e293b; }
+              .header { text-align: center; margin-bottom: 25px; border-bottom: 2px solid #f59e0b; padding-bottom: 15px; }
+              .header h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 800; color: #0f172a; }
+              .header p { margin: 0; font-size: 13px; font-weight: 600; color: #64748b; }
+              .meta-box { background-color: #fefce8; border: 1px solid #fef08a; border-radius: 12px; padding: 12px 18px; margin-bottom: 20px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 700; }
+              .meta-item { display: flex; align-items: center; gap: 6px; }
+              .meta-label { color: #854d0e; }
+              .meta-val { color: #b45309; font-weight: 800; }
+              table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+              th { background-color: #fef3c7; color: #92400e; padding: 10px 12px; border: 1px solid #fde68a; text-align: right; font-weight: 800; }
+              th:first-child, td:first-child { text-align: center; }
+              .footer { margin-top: 35px; border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: left; font-size: 11px; font-weight: 600; color: #94a3b8; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>⏰ كشف التأخر الصباحي للطلاب</h1>
+              <p>سجل رصد وضبط الطلاب المتأخرين صباحاً</p>
+            </div>
+            <div class="meta-box">
+              <div class="meta-item"><span class="meta-label">التاريخ:</span> <span class="meta-val">${dateStr}</span></div>
+              <div class="meta-item"><span class="meta-label">إجمالي الطلاب المتأخرين:</span> <span class="meta-val">${filteredList.length}</span></div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50px; text-align: center;">#</th>
+                  <th>اسم الطالب</th>
+                  <th style="text-align: center;">الصف الدراسي</th>
+                  <th style="text-align: center;">الفصل</th>
+                  <th style="text-align: center;">وقت الحضور</th>
+                  <th style="text-align: center;">السبب / العذر</th>
+                  <th style="text-align: center;">المشرف المسجل</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+            <div class="footer">
+              تم استخراج التقرير آلياً • ${new Date().toLocaleDateString('ar-SA')} - ${new Date().toLocaleTimeString('ar-SA')}
+            </div>
+            <script>
+              window.onload = function() {
+                setTimeout(function() {
+                  window.print();
+                }, 300);
+              };
+            </script>
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      console.error("Print error:", e);
+      window.print();
+    }
+  };
+
+  // Delete Morning Delay Record from table
+  const handleDeleteMorningDelay = (delayId: string, studentName: string) => {
+    confirmAction(
+      "حذف تسجيل التأخر الصباحي",
+      `هل أنت متأكد من حذف تسجيل تأخر الطالب (${studentName})؟`,
+      async () => {
+        try {
+          setMorningDelaysList(prev => prev.filter(d => d.id !== delayId));
+          await deleteMorningDelayRecord(delayId);
+          showMessage("تم حذف تسجيل التأخر بنجاح");
+        } catch (e) {
+          console.error("Error deleting morning delay:", e);
+          showMessage("حدث خطأ أثناء حذف التسجيل", "error");
+        }
+      }
+    );
+  };
+
   // Set default selected grade for customizer
   useEffect(() => {
     if (grades.length > 0 && !selectedGradeIdForClasses) {
@@ -672,7 +797,7 @@ export default function AdminPanel({
     }, 450);
   };
 
-  // Delete specific student absence record
+  // Delete specific student absence record (Instant 0ms update + background sync)
   const handleDeleteAbsence = async (recordId: string, studentId: string, isAbsentType: boolean) => {
     const isNoAbsenceDummy = studentId === "no-absence";
     const title = isNoAbsenceDummy ? "حذف التحضير بالكامل" : "حذف تسجيل الغياب";
@@ -685,60 +810,46 @@ export default function AdminPanel({
       message,
       async () => {
         try {
-          setStatsLoading(true);
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: true, type: "delete", label: "جاري حذف سجل الغياب سحابياً..." });
-          }
-          const { db } = await import("../firebase");
-          const { doc, getDoc, setDoc, deleteDoc } = await import("firebase/firestore");
-          
-          const docRef = doc(db, "attendance", recordId);
+          // 1. Optimistically update local statistics in UI immediately (0ms)
+          setTodayStats(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              rawList: prev.rawList.filter(item => {
+                if (item.recordId !== recordId) return true;
+                if (isNoAbsenceDummy) return false;
+                return item.studentId !== studentId;
+              }),
+              totalAbsences: isAbsentType ? Math.max(0, prev.totalAbsences - 1) : prev.totalAbsences,
+              totalLate: !isAbsentType ? Math.max(0, prev.totalLate - 1) : prev.totalLate
+            };
+          });
 
+          // Optimistically update absence search results table if open
+          setSearchAttendanceResult(prev => {
+            if (!prev) return prev;
+            return prev.map(rec => {
+              if (rec.id !== recordId) return rec;
+              if (isNoAbsenceDummy) return null as any;
+              return {
+                ...rec,
+                absent: isAbsentType ? (rec.absent || []).filter(id => id !== studentId) : rec.absent,
+                late: !isAbsentType ? (rec.late || []).filter(id => id !== studentId) : rec.late
+              };
+            }).filter(Boolean);
+          });
+
+          showMessage("تم حذف تسجيل الغياب بنجاح!");
+
+          // 2. Perform local-first database update and non-blocking background sync
           if (isNoAbsenceDummy) {
-            await deleteDoc(docRef);
-            showMessage("تم حذف سجل التحضير بنجاح!");
-            await loadStatistics();
-            if (searchGradeId && searchClassId && searchDate) {
-              await loadSpecificAbsenceSearch(searchGradeId, searchClassId, searchDate);
-            }
-            return;
-          }
-
-          const docSnap = await getDoc(docRef);
-          
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            let updatedAbsent = data.absent || [];
-            let updatedLate = data.late || [];
-            
-            if (isAbsentType) {
-              updatedAbsent = updatedAbsent.filter((id: string) => id !== studentId);
-            } else {
-              updatedLate = updatedLate.filter((id: string) => id !== studentId);
-            }
-            
-            const isNoAbsence = updatedAbsent.length === 0 && updatedLate.length === 0;
-            
-            await setDoc(docRef, {
-              absent: updatedAbsent,
-              late: updatedLate,
-              isNoAbsence
-            }, { merge: true });
-            
-            showMessage("تم حذف تسجيل الغياب بنجاح!");
-            await loadStatistics();
-            if (searchGradeId && searchClassId && searchDate) {
-              await loadSpecificAbsenceSearch(searchGradeId, searchClassId, searchDate);
-            }
+            await deleteAttendanceRecord(recordId);
+          } else {
+            await deleteAttendanceEntry(recordId, studentId, isAbsentType);
           }
         } catch (e) {
           console.error("Error deleting absence:", e);
           showMessage("حدث خطأ أثناء حذف الغياب", "error");
-        } finally {
-          setStatsLoading(false);
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -746,23 +857,28 @@ export default function AdminPanel({
 
   const computeStatistics = (attendance: AttendanceRecord[], behaviors: BehaviorRecord[], isBehaviorsReady: boolean = true) => {
     try {
+      const safeAttendance = Array.isArray(attendance) ? attendance : [];
+      const safeBehaviors = Array.isArray(behaviors) ? behaviors : [];
+
       // Absences analysis
       let totalAbsCount = 0;
       const studentAbsMap: Record<string, number> = {};
       
-      attendance.forEach(record => {
-        if (!record.isNoAbsence && record.absent) {
+      safeAttendance.forEach(record => {
+        if (record && !record.isNoAbsence && Array.isArray(record.absent)) {
           totalAbsCount += record.absent.length;
           record.absent.forEach(studentId => {
-            studentAbsMap[studentId] = (studentAbsMap[studentId] || 0) + 1;
+            if (studentId) {
+              studentAbsMap[studentId] = (studentAbsMap[studentId] || 0) + 1;
+            }
           });
         }
       });
 
       const absenteeRankings = Object.entries(studentAbsMap)
         .map(([studentId, count]) => {
-          const student = students.find(s => s.id === studentId);
-          const studentClass = classes.find(c => c.id === student?.classId)?.name || "بدون فصل";
+          const student = Array.isArray(students) ? students.find(s => s && s.id === studentId) : undefined;
+          const studentClass = (Array.isArray(classes) ? classes.find(c => c && c.id === student?.classId)?.name : "") || "بدون فصل";
           return {
             name: student ? student.name : "طالب غير معروف",
             count,
@@ -774,8 +890,10 @@ export default function AdminPanel({
 
       // Behavior violations frequencies
       const violationMap: Record<string, number> = {};
-      behaviors.forEach(b => {
-        violationMap[b.violation] = (violationMap[b.violation] || 0) + 1;
+      safeBehaviors.forEach(b => {
+        if (b && b.violation) {
+          violationMap[b.violation] = (violationMap[b.violation] || 0) + 1;
+        }
       });
 
       const violationRankings = Object.entries(violationMap)
@@ -785,46 +903,48 @@ export default function AdminPanel({
 
       // Recent activities feed
       const recentLogs: typeof stats.recentLogs = [];
-      const sortedAttendance = [...attendance]
-        .sort((a, b) => b.date.localeCompare(a.date))
+      const sortedAttendance = [...safeAttendance]
+        .filter(Boolean)
+        .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
         .slice(0, 5);
 
       sortedAttendance.forEach(rec => {
-        const gradeName = grades.find(g => g.id === rec.gradeId)?.name || "";
-        const className = classes.find(c => c.id === rec.classId)?.name || "";
-        const absentCount = rec.isNoAbsence ? 0 : (rec.absent?.length || 0);
-        const lateCount = rec.late?.length || 0;
+        const gradeName = (Array.isArray(grades) ? grades.find(g => g && g.id === rec.gradeId)?.name : "") || "";
+        const className = (Array.isArray(classes) ? classes.find(c => c && c.id === rec.classId)?.name : "") || "";
+        const absentCount = rec.isNoAbsence ? 0 : (Array.isArray(rec.absent) ? rec.absent.length : 0);
+        const lateCount = Array.isArray(rec.late) ? rec.late.length : 0;
         
         recentLogs.push({
           type: "حضور",
           title: `تسجيل حضور ${gradeName} - ${className}`,
           subtitle: `غياب: ${absentCount} طلاب، متأخرين: ${lateCount} طلاب • الحصة: ${rec.period}`,
-          date: rec.date
+          date: rec.date || ""
         });
       });
 
-      const sortedBehaviors = [...behaviors]
-        .sort((a, b) => b.date.localeCompare(a.date));
+      const sortedBehaviors = [...safeBehaviors]
+        .filter(Boolean)
+        .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
       sortedBehaviors.slice(0, 5).forEach(b => {
-        const studentName = students.find(s => s.id === b.studentId)?.name || "طالب";
-        const teacherName = b.teacherName || teachers.find(t => t.id === b.teacherId)?.name || "معلم الحصة";
+        const studentName = (Array.isArray(students) ? students.find(s => s && s.id === b.studentId)?.name : "") || "طالب";
+        const teacherName = b.teacherName || (Array.isArray(teachers) ? teachers.find(t => t && t.id === b.teacherId)?.name : "") || "معلم الحصة";
         recentLogs.push({
           type: "سلوك",
           title: `سلوك سلبي: ${studentName}`,
           subtitle: `المخالفة: ${b.violation}`,
-          date: b.date,
+          date: b.date || "",
           teacherName,
           id: b.id
         });
       });
 
       // Sort combined logs by date descending
-      recentLogs.sort((a, b) => b.date.localeCompare(a.date));
+      recentLogs.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
       // Calculate today stats
       const TODAY_DATE = getTodayDateString();
-      const todayAttendance = attendance.filter(rec => rec.date === TODAY_DATE);
+      const todayAttendance = safeAttendance.filter(rec => rec && rec.date === TODAY_DATE);
 
       // Helper to extract numeric timestamp from BehaviorRecord for accurate sorting
       const getBehaviorTime = (b: BehaviorRecord): number => {
@@ -951,13 +1071,26 @@ export default function AdminPanel({
       });
 
       todayAttendance.forEach(rec => {
-        const grade = grades.find(g => g.id === rec.gradeId);
-        const cls = classes.find(c => c.id === rec.classId);
-        if (!grade) return;
+        // Robust grade matching (by ID, by name, by Arabic normalization, or through associated class)
+        let grade = grades.find(g => g.id === rec.gradeId || g.name === rec.gradeId);
+        if (!grade && rec.gradeId) {
+          grade = grades.find(g => normalizeArabic(g.name) === normalizeArabic(rec.gradeId));
+        }
+        if (!grade && rec.classId) {
+          const matchedClass = classes.find(c => c.id === rec.classId || c.name === rec.classId);
+          if (matchedClass) {
+            grade = grades.find(g => g.id === matchedClass.gradeId);
+          }
+        }
+        const fallbackGradeId = grade ? grade.id : (grades[0]?.id || rec.gradeId || "general_grade");
+        const gradeName = grade ? grade.name : (rec.gradeId || "الصف الدراسي");
 
-        const gradeName = grade.name;
-        const className = cls?.name || "فصل";
-        const teacherName = teachers.find(t => t.id === rec.teacherId)?.name || "غير محدد";
+        let cls = classes.find(c => c.id === rec.classId || c.name === rec.classId);
+        if (!cls && rec.classId) {
+          cls = classes.find(c => normalizeArabic(c.name) === normalizeArabic(rec.classId));
+        }
+        const className = cls?.name || rec.classId || "فصل";
+        const teacherName = teachers.find(t => t.id === rec.teacherId)?.name || (rec as any).teacherName || "غير محدد";
 
         const pCode = getPeriodCode(rec.period);
         const pTime = getPeriodTime(rec.period);
@@ -988,63 +1121,103 @@ export default function AdminPanel({
 
         const displayTime = actualTime || pTime;
 
-        // Process absent students
+        // 1. Process absent students
         if (!rec.isNoAbsence && rec.absent && rec.absent.length > 0) {
           rec.absent.forEach(stId => {
-            const student = students.find(s => s.id === stId);
-            if (student) {
-              const entry = {
-                id: `${rec.id}-${stId}-abs`,
-                recordId: rec.id,
-                studentId: stId,
-                studentName: student.name,
-                status: "غائب",
-                periodCode: pCode,
-                classCode: cCode,
-                classId: rec.classId,
-                gradeId: rec.gradeId,
-                teacherName,
-                time: displayTime,
-                isAbsent: true
-              };
+            const student = students.find(s => s.id === stId || s.name === stId);
+            const studentName = student ? student.name : stId;
+            const entry = {
+              id: `${rec.id}-${stId}-abs`,
+              recordId: rec.id,
+              studentId: stId,
+              studentName: studentName || "طالب غائب",
+              status: "غائب",
+              periodCode: pCode,
+              classCode: cCode,
+              classId: rec.classId,
+              gradeId: fallbackGradeId,
+              teacherName,
+              time: displayTime,
+              isAbsent: true,
+              isLate: false
+            };
 
-              if (!entriesByGrade[rec.gradeId]) {
-                entriesByGrade[rec.gradeId] = [];
-              }
-              entriesByGrade[rec.gradeId].push(entry);
+            if (!entriesByGrade[fallbackGradeId]) {
+              entriesByGrade[fallbackGradeId] = [];
+            }
+            entriesByGrade[fallbackGradeId].push(entry);
 
-              const normGrade = normalizeArabic(gradeName);
-              if (normGrade.includes(normalizeArabic("الأول"))) {
-                g1Entries.push(entry);
-              } else if (normGrade.includes(normalizeArabic("الثاني"))) {
-                g2Entries.push(entry);
-              } else if (normGrade.includes(normalizeArabic("الثالث"))) {
-                g3Entries.push(entry);
-              }
+            const normGrade = normalizeArabic(gradeName);
+            if (normGrade.includes(normalizeArabic("الأول"))) {
+              g1Entries.push(entry);
+            } else if (normGrade.includes(normalizeArabic("الثاني"))) {
+              g2Entries.push(entry);
+            } else if (normGrade.includes(normalizeArabic("الثالث"))) {
+              g3Entries.push(entry);
             }
           });
-        } else {
-          // All students present / No absence
+        }
+
+        // 2. Process late students from classroom attendance (rec.late)
+        if (rec.late && Array.isArray(rec.late) && rec.late.length > 0) {
+          rec.late.forEach(stId => {
+            const student = students.find(s => s.id === stId || s.name === stId);
+            const studentName = student ? student.name : stId;
+            const entry = {
+              id: `${rec.id}-${stId}-late`,
+              recordId: rec.id,
+              studentId: stId,
+              studentName: studentName || "طالب متأخر",
+              status: "متأخر",
+              periodCode: pCode,
+              classCode: cCode,
+              classId: rec.classId,
+              gradeId: fallbackGradeId,
+              teacherName,
+              time: displayTime,
+              isAbsent: false,
+              isLate: true
+            };
+
+            if (!entriesByGrade[fallbackGradeId]) {
+              entriesByGrade[fallbackGradeId] = [];
+            }
+            entriesByGrade[fallbackGradeId].push(entry);
+
+            const normGrade = normalizeArabic(gradeName);
+            if (normGrade.includes(normalizeArabic("الأول"))) {
+              g1Entries.push(entry);
+            } else if (normGrade.includes(normalizeArabic("الثاني"))) {
+              g2Entries.push(entry);
+            } else if (normGrade.includes(normalizeArabic("الثالث"))) {
+              g3Entries.push(entry);
+            }
+          });
+        }
+
+        // 3. Process complete attendance / no absence records
+        if (rec.isNoAbsence || ((!rec.absent || rec.absent.length === 0) && (!rec.late || rec.late.length === 0))) {
           const entry = {
             id: `${rec.id}-noabs`,
             recordId: rec.id,
             studentId: "no-absence",
-            studentName: "لا يوجد غياب",
+            studentName: "لا يوجد غياب أو تأخر",
             status: "حضور كامل",
             periodCode: pCode,
             classCode: cCode,
             classId: rec.classId,
-            gradeId: rec.gradeId,
+            gradeId: fallbackGradeId,
             teacherName,
             time: displayTime,
             isAbsent: false,
+            isLate: false,
             isNoAbsenceDummy: true
           };
 
-          if (!entriesByGrade[rec.gradeId]) {
-            entriesByGrade[rec.gradeId] = [];
+          if (!entriesByGrade[fallbackGradeId]) {
+            entriesByGrade[fallbackGradeId] = [];
           }
-          entriesByGrade[rec.gradeId].push(entry);
+          entriesByGrade[fallbackGradeId].push(entry);
 
           const normGrade = normalizeArabic(gradeName);
           if (normGrade.includes(normalizeArabic("الأول"))) {
@@ -1300,22 +1473,22 @@ export default function AdminPanel({
     }
   }, [searchGradeId, classes]);
 
+  const cachedAttendanceRef = useRef<AttendanceRecord[]>([]);
+  const cachedBehaviorsRef = useRef<BehaviorRecord[]>([]);
+  const behaviorsReceivedRef = useRef<boolean>(false);
+
   useEffect(() => {
     if ((isAuthenticated || isReadOnly) && activeSubTab === "stats") {
       setStatsLoading(true);
       
-      let currentAttendance: AttendanceRecord[] = [];
-      let currentBehaviors: BehaviorRecord[] = [];
-      let behaviorsReceived = false;
-      
       const runCompute = () => {
-        computeStatistics(currentAttendance, currentBehaviors, behaviorsReceived);
+        computeStatistics(cachedAttendanceRef.current, cachedBehaviorsRef.current, behaviorsReceivedRef.current);
         setStatsLoading(false);
       };
 
       const unsubAttendance = subscribeToAllAttendanceRecords(
         (records) => {
-          currentAttendance = records;
+          cachedAttendanceRef.current = records;
           runCompute();
         },
         (_error) => {
@@ -1325,8 +1498,8 @@ export default function AdminPanel({
 
       const unsubBehaviors = subscribeToAllBehaviorRecords(
         (records) => {
-          currentBehaviors = records;
-          behaviorsReceived = true;
+          cachedBehaviorsRef.current = records;
+          behaviorsReceivedRef.current = true;
           runCompute();
         },
         (_error) => {
@@ -1334,12 +1507,27 @@ export default function AdminPanel({
         }
       );
 
+      const unsubDelays = subscribeToAllMorningDelayRecords(
+        (records) => {
+          setMorningDelaysList(records);
+        },
+        (_error) => {}
+      );
+
       return () => {
         unsubAttendance();
         unsubBehaviors();
+        unsubDelays();
       };
     }
-  }, [isAuthenticated, isReadOnly, activeSubTab, students, classes, grades]);
+  }, [isAuthenticated, isReadOnly, activeSubTab]);
+
+  // Re-compute stats when students, classes, or grades change without tearing down subscriptions
+  useEffect(() => {
+    if ((isAuthenticated || isReadOnly) && activeSubTab === "stats" && cachedAttendanceRef.current.length > 0) {
+      computeStatistics(cachedAttendanceRef.current, cachedBehaviorsRef.current, behaviorsReceivedRef.current);
+    }
+  }, [students, classes, grades]);
 
   // --- CRUD HANDLERS (Grades & Classes) ---
   const handleAddGradeSubmit = async (e: React.FormEvent) => {
@@ -1519,23 +1707,13 @@ export default function AdminPanel({
       "حذف الفصل الدراسي",
       `هل أنت متأكد من حذف فصل ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
-        setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الفصل الدراسي وطلابه...` });
-        }
         try {
           setClasses(prev => prev.filter(c => c.id !== id));
           setStudents(prev => prev.filter(s => s.classId !== id));
-          await deleteClass(id);
           showMessage("تم حذف الفصل بنجاح!");
-          onRefreshData().catch(console.error);
+          await deleteClass(id);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
-        } finally {
-          setSubmitting(prev => ({ ...prev, ['deleteClass_' + id]: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -1559,9 +1737,6 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addTeacher: true }));
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة المعلم الجديد سحابياً..." });
-    }
     try {
       const newId = await addTeacher(trimmedName);
       setTeachers(prev => {
@@ -1571,14 +1746,10 @@ export default function AdminPanel({
       });
       setNewTeacherName("");
       showMessage("تم إضافة المعلم بنجاح!");
-      onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة المعلم", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addTeacher: false }));
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -1587,23 +1758,13 @@ export default function AdminPanel({
       "حذف المعلم",
       `هل أنت متأكد من حذف المعلم ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
-        setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف المعلم ${name}...` });
-        }
         try {
           setSelectedTeacherIds(prev => prev.filter(tId => tId !== id));
           setTeachers(prev => prev.filter(t => t.id !== id));
-          await deleteTeacher(id);
           showMessage("تم حذف المعلم بنجاح!");
-          onRefreshData().catch(console.error);
+          await deleteTeacher(id);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
-        } finally {
-          setSubmitting(prev => ({ ...prev, ['deleteTeacher_' + id]: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -1636,9 +1797,6 @@ export default function AdminPanel({
     }
 
     setSubmitting(prev => ({ ...prev, addStudent: true }));
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري إضافة الطالب الجديد سحابياً..." });
-    }
     try {
       const newId = await addStudent(trimmedName, newStudentGradeId, newStudentClassId);
       setStudents(prev => {
@@ -1647,14 +1805,10 @@ export default function AdminPanel({
       });
       setNewStudentName("");
       showMessage("تم إضافة الطالب بنجاح!");
-      onRefreshData().catch(console.error);
     } catch (e) {
       showMessage("حدث خطأ أثناء إضافة الطالب", "error");
     } finally {
       setSubmitting(prev => ({ ...prev, addStudent: false }));
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -1663,23 +1817,13 @@ export default function AdminPanel({
       "حذف الطالب",
       `هل أنت متأكد من حذف الطالب ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
       async () => {
-        setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف الطالب ${name}...` });
-        }
         try {
           setSelectedStudentIds(prev => prev.filter(sId => sId !== id));
           setStudents(prev => prev.filter(s => s.id !== id));
-          await deleteStudent(id);
           showMessage("تم حذف الطالب بنجاح!");
-          onRefreshData().catch(console.error);
+          await deleteStudent(id);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
-        } finally {
-          setSubmitting(prev => ({ ...prev, ['deleteStudent_' + id]: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -1691,26 +1835,14 @@ export default function AdminPanel({
       "حذف الطلاب المحددين",
       `هل أنت متأكد من حذف عدد ${selectedStudentIds.length} طالب دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
-        setSubmitting(prev => ({ ...prev, deleteSelectedStudents: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف عدد ${selectedStudentIds.length} طالب مضاف سحابياً...` });
-        }
         try {
           const idsToDelete = [...selectedStudentIds];
           setSelectedStudentIds([]);
           setStudents(prev => prev.filter(s => !idsToDelete.includes(s.id)));
-          showMessage(`جاري حذف ${idsToDelete.length} طالب...`);
-          
-          await deleteStudentsBatch(idsToDelete);
           showMessage("تم حذف الطلاب المحددين بنجاح!");
-          onRefreshData().catch(console.error);
+          await deleteStudentsBatch(idsToDelete);
         } catch (e) {
           showMessage("حدث خطأ أثناء حذف الطلاب", "error");
-        } finally {
-          setSubmitting(prev => ({ ...prev, deleteSelectedStudents: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -1722,26 +1854,14 @@ export default function AdminPanel({
       "حذف المعلمين المحددين",
       `هل أنت متأكد من حذف عدد ${selectedTeacherIds.length} معلم دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
       async () => {
-        setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: true }));
-        if (setGlobalProgress) {
-          setGlobalProgress({ active: true, type: "delete", label: `جاري حذف عدد ${selectedTeacherIds.length} معلم مضاف سحابياً...` });
-        }
         try {
           const idsToDelete = [...selectedTeacherIds];
           setSelectedTeacherIds([]);
           setTeachers(prev => prev.filter(t => !idsToDelete.includes(t.id)));
-          showMessage(`جاري حذف ${idsToDelete.length} معلم...`);
-          
-          await deleteTeachersBatch(idsToDelete);
           showMessage("تم حذف المعلمين المحددين بنجاح!");
-          onRefreshData().catch(console.error);
+          await deleteTeachersBatch(idsToDelete);
         } catch (e) {
           showMessage("حدث خطأ أثناء حذف المعلمين", "error");
-        } finally {
-          setSubmitting(prev => ({ ...prev, deleteSelectedTeachers: false }));
-          if (setGlobalProgress) {
-            setGlobalProgress({ active: false, type: null, label: "" });
-          }
         }
       }
     );
@@ -2207,6 +2327,23 @@ export default function AdminPanel({
               </button>
               <button
                 type="button"
+                onClick={() => setActiveStatsTab("morning_delay")}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer ${
+                  activeStatsTab === "morning_delay"
+                    ? "bg-white text-amber-700 shadow-3xs border border-slate-200/50"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <span>⏰</span>
+                <span>التاخر الصباحي</span>
+                {morningDelaysList.length > 0 && (
+                  <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.2 rounded-full border border-amber-200">
+                    {morningDelaysList.filter(d => d.date === (delayDateFilter || getTodayDateString())).length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveStatsTab("selected_attendance")}
                 className={`px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all duration-200 cursor-pointer ${
                   activeStatsTab === "selected_attendance"
@@ -2249,44 +2386,26 @@ export default function AdminPanel({
               </button>
             </div>
 
-            {/* Actions: View switcher & Print Action */}
+            {/* Actions: Print Action */}
             <div className="flex items-center gap-2">
-              {activeStatsTab === "attendance" && (
-                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/60" dir="rtl">
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceViewMode("list")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
-                      attendanceViewMode === "list"
-                        ? "bg-white text-indigo-700 shadow-3xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="عرض كقائمة"
-                  >
-                    <span>☰</span>
-                    <span>قائمة</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAttendanceViewMode("grid")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
-                      attendanceViewMode === "grid"
-                        ? "bg-white text-indigo-700 shadow-3xs"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                    title="عرض كشبكة"
-                  >
-                    <span>⊞</span>
-                    <span>شبكة</span>
-                  </button>
-                </div>
-              )}
 
               <button
                 type="button"
                 onClick={() => {
                   if (activeStatsTab === "selected_attendance") {
                     handlePrintSelectedAttendance();
+                  } else if (activeStatsTab === "morning_delay") {
+                    const filtered = morningDelaysList.filter(d => {
+                      if (delayDateFilter && d.date !== delayDateFilter) return false;
+                      if (delayGradeFilter !== "all" && d.gradeId !== delayGradeFilter) return false;
+                      if (delayClassFilter !== "all" && d.classId !== delayClassFilter) return false;
+                      if (delaySearchFilter.trim()) {
+                        const term = delaySearchFilter.trim().toLowerCase();
+                        return (d.studentName || "").toLowerCase().includes(term) || (d.recordedBy || "").toLowerCase().includes(term);
+                      }
+                      return true;
+                    });
+                    handlePrintMorningDelays(filtered);
                   } else {
                     window.print();
                   }
@@ -2294,7 +2413,13 @@ export default function AdminPanel({
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-98 transition-all cursor-pointer"
               >
                 <span>🖨️</span>
-                <span>{activeStatsTab === "selected_attendance" ? "طباعة الغياب المحدد" : "طباعة الملخص"}</span>
+                <span>
+                  {activeStatsTab === "selected_attendance" 
+                    ? "طباعة الغياب المحدد" 
+                    : activeStatsTab === "morning_delay"
+                    ? "طباعة كشف المتأخرين"
+                    : "طباعة الملخص"}
+                </span>
               </button>
             </div>
           </div>
@@ -2364,22 +2489,25 @@ export default function AdminPanel({
 
           {/* TAB CONTENT: DAILY ATTENDANCE (DYNAMIC COLUMNS / LIST FOR ALL GRADES) */}
           {activeStatsTab === "attendance" && (
-            <div className={`${
-              attendanceViewMode === "list" 
-                ? "flex flex-col space-y-4" 
-                : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5"
-            } animate-fadeIn`}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 items-start animate-fadeIn">
               {grades.map(grade => {
                 const gradeEntries = todayStats.entriesByGrade[grade.id] || [];
                 const gradeClasses = classes.filter(c => c.gradeId === grade.id);
+                const absentEntriesCount = gradeEntries.filter((e: any) => !e.isNoAbsenceDummy && e.isAbsent).length;
+                const lateEntriesCount = gradeEntries.filter((e: any) => e.isLate).length;
                 return (
-                  <div key={grade.id} className="flex flex-col">
-                    <div className="bg-[#1e40af] text-white px-3.5 py-2 rounded-t-2xl flex items-center justify-between border-b border-blue-900/20 shadow-3xs">
-                      <div className="flex items-center gap-2">
+                  <div key={grade.id} className="flex flex-col rounded-2xl shadow-sm overflow-hidden bg-white border border-slate-200 hover:shadow-md transition-all duration-200">
+                    <div className="bg-[#1e40af] text-white px-3.5 py-2 flex items-center justify-between border-b border-blue-900/20 shadow-3xs">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs sm:text-sm font-black">{grade.name}</span>
                         <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center justify-center shadow-3xs">
-                          {gradeEntries.length} غياب
+                          {absentEntriesCount} غياب
                         </span>
+                        {lateEntriesCount > 0 && (
+                          <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full flex items-center justify-center shadow-3xs">
+                            {lateEntriesCount} متأخر
+                          </span>
+                        )}
                       </div>
                       <span className="bg-blue-700/90 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-md">
                         {getTodayFormattedArabic()}
@@ -2393,13 +2521,13 @@ export default function AdminPanel({
                       ) : (
                         gradeClasses.map(cls => {
                           const cCode = getClassCode(cls.name);
-                          const count = gradeEntries.filter((entry: any) => entry.classId === cls.id).length;
+                          const count = gradeEntries.filter((entry: any) => entry.classId === cls.id && (entry.isAbsent || entry.isLate)).length;
                           const hasAbsence = count > 0;
                           return (
                             <span
                               key={cls.id}
                               className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border flex items-center gap-1 shadow-3xs transition ${
-                                hasAbsence
+                              hasAbsence
                                   ? "bg-rose-50 text-rose-700 border-rose-200 font-black"
                                   : "bg-slate-50/10 text-slate-300 border-slate-700/50 hover:bg-slate-50/20"
                               }`}
@@ -2412,25 +2540,26 @@ export default function AdminPanel({
                       )}
                     </div>
 
-                    <div className="bg-white rounded-b-2xl shadow-3xs border-x border-b border-slate-150 overflow-hidden flex-1">
-                      <div className="overflow-x-auto">
+                    <div className="bg-white overflow-hidden flex-1">
+                      {/* DESKTOP VIEW: Full Data Table (Hidden on small mobile screens) */}
+                      <div className="hidden md:block overflow-x-auto">
                         <table className="w-full text-right text-xs" dir="rtl">
-                          <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
+                          <thead className="bg-slate-50 text-slate-500 font-extrabold text-[10px] border-b border-slate-100">
                             <tr>
-                              <th className="py-2 px-3 text-center w-12">#</th>
-                              <th className="py-2 px-3 text-right">وقت التسجيل</th>
-                              <th className="py-2 px-3 text-right">اسم الطالب</th>
-                              <th className="py-2 px-2 text-center">الحصة</th>
-                              <th className="py-2 px-2 text-center">الفصل</th>
-                              <th className="py-2 px-3 text-right">المعلم المعتمد</th>
-                              {!isReadOnly && <th className="py-2 px-2 text-center">⚙️</th>}
+                              <th className="py-1.5 px-1 text-center w-7">#</th>
+                              <th className="py-1.5 px-1.5 text-right font-black">وقت التسجيل</th>
+                              <th className="py-1.5 px-2 text-right font-black">اسم الطالب</th>
+                              <th className="py-1.5 px-1 text-center font-black">الحصة</th>
+                              <th className="py-1.5 px-1 text-center font-black">الفصل</th>
+                              <th className="py-1.5 px-1.5 text-right font-black">المعلم المعتمد</th>
+                              {!isReadOnly && <th className="py-1.5 px-1 text-center">⚙️</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {gradeEntries.length === 0 ? (
                               <tr>
                                 <td colSpan={isReadOnly ? 6 : 7} className="py-10 text-center text-slate-400 font-black">
-                                  <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب مسجل لهذا الصف اليوم 👍</span>
+                                  <span className="underline decoration-dashed underline-offset-4 decoration-slate-300">لا يوجد غياب أو تأخر مسجل لهذا الصف اليوم 👍</span>
                                 </td>
                               </tr>
                             ) : (
@@ -2440,51 +2569,62 @@ export default function AdminPanel({
                                   className={`transition ${
                                     entry.isNoAbsenceDummy 
                                       ? "bg-emerald-50/60 hover:bg-emerald-100/80 dark:bg-emerald-950/20 dark:hover:bg-emerald-900/30" 
-                                      : "hover:bg-slate-50/70"
+                                      : entry.isLate
+                                        ? "bg-amber-50/40 hover:bg-amber-100/60"
+                                        : "hover:bg-slate-50/70"
                                   }`}
                                 >
-                                  <td className="py-2 px-3 text-center font-bold text-slate-400 text-xs">
-                                    <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto text-[11px] font-black">
+                                  <td className="py-1.5 px-1 text-center font-bold text-slate-400">
+                                    <div className="w-4.5 h-4.5 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto text-[9.5px] font-black">
                                       {index + 1}
                                     </div>
                                   </td>
-                                  <td className="py-2 px-3 font-semibold text-slate-500 text-xs whitespace-nowrap">{entry.time}</td>
-                                  <td className="py-2 px-3">
-                                    <div className="flex flex-col justify-center">
+                                  <td className="py-1.5 px-1.5 font-medium text-slate-500 text-[10px] whitespace-nowrap">{entry.time}</td>
+                                  <td className="py-1.5 px-2">
+                                    <div className="flex items-center gap-1.5">
                                       {entry.isNoAbsenceDummy ? (
                                         <span 
-                                          className="bg-emerald-600 text-white font-black text-xs px-2 py-0.5 rounded-md inline-block text-center shadow-3xs whitespace-nowrap"
+                                          className="bg-emerald-600 text-white font-black text-[10.5px] px-2 py-0.5 rounded-md inline-block text-center shadow-3xs whitespace-nowrap"
                                           title={entry.studentName}
                                         >
                                           {entry.studentName}
                                         </span>
+                                      ) : entry.isLate ? (
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9.5px] font-black px-1.5 py-0.2 rounded shrink-0">
+                                            متأخر
+                                          </span>
+                                          <span className="font-extrabold text-slate-900 text-[11px] whitespace-nowrap block" title={entry.studentName}>
+                                            {entry.studentName}
+                                          </span>
+                                        </div>
                                       ) : (
-                                        <span className="font-extrabold text-slate-900 text-xs sm:text-sm whitespace-nowrap block" title={entry.studentName}>
+                                        <span className="font-extrabold text-slate-900 text-[11px] whitespace-nowrap block" title={entry.studentName}>
                                           {entry.studentName}
                                         </span>
                                       )}
                                     </div>
                                   </td>
-                                  <td className="py-2 px-2 text-center">
-                                    <span className={`font-extrabold text-xs w-6 h-6 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
+                                  <td className="py-1.5 px-1 text-center">
+                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
                                       {getPeriodNum(entry.periodCode)}
                                     </span>
                                   </td>
-                                  <td className="py-2 px-2 text-center">
-                                    <span className={`font-extrabold text-xs w-6 h-6 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
+                                  <td className="py-1.5 px-1 text-center">
+                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
                                       {getClassNum(entry.classCode)}
                                     </span>
                                   </td>
-                                  <td className="py-2 px-3 text-slate-600 font-bold text-xs whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
+                                  <td className="py-1.5 px-1.5 text-slate-600 font-bold text-[10.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
                                   {!isReadOnly && (
-                                    <td className="py-2 px-2 text-center">
+                                    <td className="py-1.5 px-1 text-center">
                                       <button
                                         type="button"
                                         onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
                                         className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
-                                        title="حذف هذا تسجيل الغياب"
+                                        title="حذف هذا التسجيل"
                                       >
-                                        <Trash2 className="w-4 h-4" />
+                                        <Trash2 className="w-3 h-3" />
                                       </button>
                                     </td>
                                   )}
@@ -2494,12 +2634,391 @@ export default function AdminPanel({
                           </tbody>
                         </table>
                       </div>
+
+                      {/* MOBILE TOUCH CARDS VIEW (Clean, touch-friendly, optimized for small screens) */}
+                      <div className="block md:hidden divide-y divide-slate-100 p-2">
+                        {gradeEntries.length === 0 ? (
+                          <div className="py-8 text-center text-slate-400 font-black text-xs">
+                            لا يوجد غياب أو تأخر مسجل لهذا الصف اليوم 👍
+                          </div>
+                        ) : (
+                          gradeEntries.map((entry: any, index: number) => (
+                            <div 
+                              key={entry.id} 
+                              className={`p-3 rounded-xl mb-1.5 transition-all ${
+                                entry.isNoAbsenceDummy 
+                                  ? "bg-emerald-50/70 border border-emerald-200/80" 
+                                  : entry.isLate
+                                    ? "bg-amber-50/80 border border-amber-200"
+                                    : "bg-slate-50/60 border border-slate-200/60 hover:bg-slate-100/70"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-black shrink-0">
+                                    {index + 1}
+                                  </span>
+                                  <div className="font-black text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                                    {entry.isNoAbsenceDummy ? (
+                                      <span className="text-emerald-700">{entry.studentName}</span>
+                                    ) : entry.isLate ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="bg-amber-200/80 text-amber-900 text-[9.5px] font-black px-1.5 py-0.2 rounded">متأخر</span>
+                                        <span>{entry.studentName}</span>
+                                      </div>
+                                    ) : (
+                                      <span>{entry.studentName}</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {!isReadOnly && !entry.isNoAbsenceDummy && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
+                                    className="text-slate-400 hover:text-rose-600 p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg active:bg-rose-50"
+                                    title="حذف هذا التسجيل"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="mt-2 pt-2 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`font-black text-[10px] px-2 py-0.5 rounded-md border ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`}>
+                                    حصة {getPeriodNum(entry.periodCode)}
+                                  </span>
+                                  <span className={`font-black text-[10px] px-2 py-0.5 rounded-md border ${getClassBadgeStyles(getClassNum(entry.classCode))}`}>
+                                    فصل {getClassNum(entry.classCode)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 text-slate-500 font-bold text-[10px]">
+                                  <span>{entry.teacherName}</span>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="font-mono text-slate-400">{entry.time}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
+
+          {/* TAB CONTENT: MORNING DELAY (التاخر الصباحي) */}
+          {activeStatsTab === "morning_delay" && (() => {
+            const filteredDelays = morningDelaysList.filter(d => {
+              if (delayDateFilter && delayDateFilter !== "all" && d.date !== delayDateFilter) return false;
+              if (delayGradeFilter !== "all" && d.gradeId !== delayGradeFilter) return false;
+              if (delayClassFilter !== "all" && d.classId !== delayClassFilter) return false;
+              if (delaySearchFilter.trim()) {
+                const term = delaySearchFilter.trim().toLowerCase();
+                const matchName = (d.studentName || "").toLowerCase().includes(term);
+                const matchTeacher = (d.recordedBy || "").toLowerCase().includes(term);
+                const matchReason = (d.reason || "").toLowerCase().includes(term);
+                return matchName || matchTeacher || matchReason;
+              }
+              return true;
+            });
+
+            const uniqueLateStudentIds = new Set(filteredDelays.map(d => d.studentId));
+            const availableClassesForFilter = delayGradeFilter === "all" ? classes : classes.filter(c => c.gradeId === delayGradeFilter);
+
+            return (
+              <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn" dir="rtl">
+                {/* Header & Quick stats */}
+                <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                      <span className="p-1.5 bg-amber-500 text-white rounded-lg text-xs">⏰</span>
+                      <span>سجل الطلاب المتأخرين صباحاً</span>
+                      <span className="bg-amber-100 text-amber-900 text-xs font-black px-2.5 py-0.5 rounded-full border border-amber-200">
+                        {filteredDelays.length} حالة تأخر
+                      </span>
+                    </h3>
+                    <p className="text-2xs text-slate-400 font-bold mt-1">
+                      كشف شامل لجميع الطلاب المتأخرين عن الطابور الصباحي والحصة الأولى مع الأوقات والأسباب.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePrintMorningDelays(filteredDelays)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-xs active:scale-95 transition cursor-pointer shrink-0"
+                    >
+                      <span>🖨️</span>
+                      <span>طباعة الكشف</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Controls Bar */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200/60">
+                  {/* Date Filter */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-600 mb-1">
+                      🗓️ تاريخ العرض:
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={delayDateFilter === "all" ? "" : delayDateFilter}
+                        onChange={(e) => setDelayDateFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setDelayDateFilter(delayDateFilter === "all" ? getTodayDateString() : "all")}
+                        className={`text-[10px] font-black px-2 py-1.5 rounded-lg border whitespace-nowrap transition cursor-pointer ${
+                          delayDateFilter === "all"
+                            ? "bg-amber-500 text-white border-amber-600"
+                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                        }`}
+                        title="عرض جميع التواريخ"
+                      >
+                        {delayDateFilter === "all" ? "اليوم" : "الكل"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Grade Filter */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-600 mb-1">
+                      🏫 الصف الدراسي:
+                    </label>
+                    <select
+                      value={delayGradeFilter}
+                      onChange={(e) => {
+                        setDelayGradeFilter(e.target.value);
+                        setDelayClassFilter("all");
+                      }}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value="all">جميع الصفوف</option>
+                      {grades.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Class Filter */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-600 mb-1">
+                      🚪 الفصل:
+                    </label>
+                    <select
+                      value={delayClassFilter}
+                      onChange={(e) => setDelayClassFilter(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value="all">جميع الفصول</option>
+                      {availableClassesForFilter.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Student/Search filter */}
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-slate-600 mb-1">
+                      🔍 بحث بالاسم:
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="ابحث باسم الطالب..."
+                        value={delaySearchFilter}
+                        onChange={(e) => setDelaySearchFilter(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-lg pr-3 pl-8 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      {delaySearchFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setDelaySearchFilter("")}
+                          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Summary badges */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="bg-amber-50 text-amber-800 border border-amber-200/80 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5">
+                    <span>👥</span>
+                    <span>الطلاب المتأخرين:</span>
+                    <span className="bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-md font-black">
+                      {uniqueLateStudentIds.size} طالب
+                    </span>
+                  </div>
+                  <div className="bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                    <span>🗓️</span>
+                    <span>تاريخ العرض:</span>
+                    <span className="font-extrabold text-slate-900">{delayDateFilter || getTodayDateString()}</span>
+                  </div>
+                  {delayDateFilter !== getTodayDateString() && (
+                    <button
+                      type="button"
+                      onClick={() => setDelayDateFilter(getTodayDateString())}
+                      className="text-amber-700 hover:text-amber-800 text-xs font-black underline cursor-pointer"
+                    >
+                      الرجوع لتاريخ اليوم 👈
+                    </button>
+                  )}
+                </div>
+
+                {/* Table of Late Students (Desktop) and Cards (Mobile) */}
+                <div className="rounded-xl border border-slate-200/80 shadow-2xs overflow-hidden bg-white">
+                  {/* Desktop Table View */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-right border-collapse">
+                      <thead>
+                        <tr className="bg-amber-500 text-white text-xs font-black">
+                          <th className="py-2.5 px-3 text-center w-12">#</th>
+                          <th className="py-2.5 px-3">اسم الطالب</th>
+                          <th className="py-2.5 px-3 text-center">الصف الدراسي</th>
+                          <th className="py-2.5 px-3 text-center">الفصل</th>
+                          <th className="py-2.5 px-3 text-center">وقت الحضور</th>
+                          <th className="py-2.5 px-3 text-center">السبب / العذر</th>
+                          <th className="py-2.5 px-3 text-center">المشرف المسجل</th>
+                          {!isReadOnly && <th className="py-2.5 px-3 text-center w-16">إجراء</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {filteredDelays.length === 0 ? (
+                          <tr>
+                            <td colSpan={isReadOnly ? 7 : 8} className="py-12 text-center text-slate-400 font-bold bg-white">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <span className="text-3xl">⏰✨</span>
+                                <span className="text-sm font-black text-slate-600">لا يوجد طلاب متأخرين مسجلين في هذا التاريخ أو الفلتر</span>
+                                <p className="text-2xs text-slate-400">
+                                  يمكنك رصد التأخر الصباحي مباشرة من بوابة "التأخر الصباحي" في القائمة الرئيسية.
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredDelays.map((entry, index) => (
+                            <tr key={entry.id || index} className="hover:bg-amber-50/40 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-400">{index + 1}</td>
+                              <td className="py-2.5 px-3 font-extrabold text-slate-900 whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                  <span>{entry.studentName}</span>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
+                                {entry.gradeName || "-"}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-700 whitespace-nowrap">
+                                {entry.className || "-"}
+                              </td>
+                              <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                <span className="font-extrabold text-amber-800 bg-amber-100/70 border border-amber-200 px-2 py-0.5 rounded-md dir-ltr inline-block">
+                                  {entry.arrivalTime || "-"}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${
+                                  entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-amber-50 text-amber-700 border-amber-200"
+                                }`}>
+                                  {entry.reason || "بدون عذر"}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold text-slate-600 whitespace-nowrap">
+                                {entry.recordedBy || "-"}
+                              </td>
+                              {!isReadOnly && (
+                                <td className="py-2.5 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName)}
+                                    className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                    title="حذف هذا التسجيل"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Touch Cards View */}
+                  <div className="block md:hidden divide-y divide-slate-100 p-2.5">
+                    {filteredDelays.length === 0 ? (
+                      <div className="py-10 text-center text-slate-400 font-black text-xs">
+                        لا يوجد طلاب متأخرين مسجلين في هذا الفلتر
+                      </div>
+                    ) : (
+                      filteredDelays.map((entry, index) => (
+                        <div key={entry.id || index} className="p-3 bg-amber-50/40 rounded-xl mb-2 border border-amber-200/60">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[10px] font-black shrink-0">
+                                {index + 1}
+                              </span>
+                              <div>
+                                <span className="font-extrabold text-slate-900 text-xs sm:text-sm block">
+                                  {entry.studentName}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-bold">
+                                  {entry.gradeName} • {entry.className}
+                                </span>
+                              </div>
+                            </div>
+
+                            {!isReadOnly && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName)}
+                                className="text-slate-400 hover:text-rose-600 p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg active:bg-rose-50"
+                                title="حذف هذا التسجيل"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="mt-2.5 pt-2 border-t border-amber-200/50 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="bg-amber-100 text-amber-900 font-black text-[10px] px-2 py-0.5 rounded-md border border-amber-300 dir-ltr">
+                                ⏰ {entry.arrivalTime || "-"}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-black border ${
+                                entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : "bg-amber-100/80 text-amber-800 border-amber-300"
+                              }`}>
+                                {entry.reason || "بدون عذر"}
+                              </span>
+                            </div>
+
+                            <span className="text-[10px] text-slate-500 font-bold">
+                              المشرف: <strong className="text-slate-700">{entry.recordedBy || "-"}</strong>
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* TAB CONTENT: SPECIFIC SEARCH (غياب محدد) */}
           {activeStatsTab === "selected_attendance" && (
@@ -2795,21 +3314,28 @@ export default function AdminPanel({
                                 <td className="py-3 px-2 text-center">
                                   <button
                                     type="button"
-                                    onClick={async () => {
+                                    onClick={() => {
                                       confirmAction(
                                         "حذف المخالفة السلوكية",
                                         "هل أنت متأكد من حذف هذه الملاحظة السلوكية؟ لا يمكن التراجع عن هذا الإجراء.",
                                         async () => {
                                           try {
-                                            setStatsLoading(true);
-                                            const { deleteBehaviorRecord } = await import("../dbService");
-                                            await deleteBehaviorRecord(log.id);
+                                            // Optimistic UI state update (0ms)
+                                            setStats(prev => {
+                                              if (!prev) return prev;
+                                              return {
+                                                ...prev,
+                                                allBehaviorsList: (prev.allBehaviorsList || []).filter(b => b.id !== log.id),
+                                                todayBehaviorsList: (prev.todayBehaviorsList || []).filter(b => b.id !== log.id),
+                                                totalBehaviors: Math.max(0, (prev.totalBehaviors || 0) - 1),
+                                                todayBehaviors: Math.max(0, (prev.todayBehaviors || 0) - (log.date === getTodayDateString() ? 1 : 0))
+                                              };
+                                            });
                                             showMessage("تم حذف السلوك بنجاح!");
-                                            await loadStatistics();
+                                            await deleteBehaviorRecord(log.id);
                                           } catch (e) {
                                             console.error("Error deleting behavior record:", e);
-                                          } finally {
-                                            setStatsLoading(false);
+                                            showMessage("حدث خطأ أثناء حذف السلوك", "error");
                                           }
                                         }
                                       );

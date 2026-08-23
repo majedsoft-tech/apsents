@@ -320,15 +320,17 @@ export default function App() {
   };
 
   const deduplicateById = <T extends { id: string }>(arr: T[]): T[] => {
+    if (!Array.isArray(arr)) return [];
     const seen = new Set<string>();
     return arr.filter(item => {
-      if (!item.id || seen.has(item.id)) return false;
+      if (!item || !item.id || seen.has(item.id)) return false;
       seen.add(item.id);
       return true;
     });
   };
 
   const deduplicateClasses = (arr: Class[]): Class[] => {
+    if (!Array.isArray(arr)) return [];
     const seenIds = new Set<string>();
     const seenGradeName = new Set<string>();
     return arr.filter(c => {
@@ -372,111 +374,66 @@ export default function App() {
     let unsubClasses: (() => void) | null = null;
     let unsubTeachers: (() => void) | null = null;
     let unsubStudents: (() => void) | null = null;
-    let active = true;
 
-    const initialize = async () => {
-      try {
-        let [g, c, t, s, name] = await Promise.all([
-          getGrades(),
-          getClasses(),
-          getTeachers(),
-          getStudents(),
-          getSchoolName()
-        ]);
-
-        if (!active) return;
-
-        // Set initial state from authoritative Firestore load
-        if (name) {
-          setSchoolName(name);
+    try {
+      // 1. Subscribe to School Name
+      unsubSchool = subscribeToSchoolName((newName) => {
+        if (newName) {
+          setSchoolName(newName);
           if (currentUser.email) {
-            localStorage.setItem(`school_name_${currentUser.email.toLowerCase()}`, name);
+            localStorage.setItem(`school_name_${currentUser.email.toLowerCase()}`, newName);
           }
         } else {
           setSchoolName("");
         }
+      });
 
-        const sortedGrades = deduplicateById([...g]).sort((a, b) => {
+      // 2. Subscribe to Grades
+      unsubGrades = subscribeToGrades((newGrades) => {
+        const safeList = Array.isArray(newGrades) ? newGrades : [];
+        const sorted = deduplicateById([...safeList]).sort((a, b) => {
           const timeA = (a as any).createdAt || 0;
           const timeB = (b as any).createdAt || 0;
           if (timeA !== timeB) return timeA - timeB;
-          return a.name.localeCompare(b.name, "ar");
+          return (a.name || "").localeCompare(b.name || "", "ar");
         });
-        setGrades(sortedGrades);
+        setGrades(sorted);
+        setLoading(false);
+      });
 
-        const sortedClasses = deduplicateClasses([...c]).sort((a, b) => {
+      // 3. Subscribe to Classes
+      unsubClasses = subscribeToClasses((newClasses) => {
+        const safeList = Array.isArray(newClasses) ? newClasses : [];
+        const sorted = deduplicateClasses([...safeList]).sort((a, b) => {
           const numA = getNumberFromName(a.name);
           const numB = getNumberFromName(b.name);
           if (numA !== numB) return numA - numB;
-          return a.name.localeCompare(b.name, "ar");
+          return (a.name || "").localeCompare(b.name || "", "ar");
         });
-        setClasses(sortedClasses);
+        setClasses(sorted);
+      });
 
-        const sortedTeachers = deduplicateById([...t]).sort((a, b) => a.name.localeCompare(b.name, "ar"));
-        setTeachers(sortedTeachers);
+      // 4. Subscribe to Teachers
+      unsubTeachers = subscribeToTeachers((newTeachers) => {
+        const safeList = Array.isArray(newTeachers) ? newTeachers : [];
+        const sorted = deduplicateById([...safeList]).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+        setTeachers(sorted);
+      });
 
-        setStudents(deduplicateById(s));
+      // 5. Subscribe to Students
+      unsubStudents = subscribeToStudents((newStudents) => {
+        const safeList = Array.isArray(newStudents) ? newStudents : [];
+        setStudents(deduplicateById(safeList));
+      });
 
-        // Turn off loading once initial data is perfectly ready
-        setLoading(false);
-
-        // 1. Subscribe to School Name
-        unsubSchool = subscribeToSchoolName((newName) => {
-          if (newName) {
-            setSchoolName(newName);
-            if (currentUser.email) {
-              localStorage.setItem(`school_name_${currentUser.email.toLowerCase()}`, newName);
-            }
-          } else {
-            setSchoolName("");
-          }
-        });
-
-        // 2. Subscribe to Grades
-        unsubGrades = subscribeToGrades((newGrades) => {
-          const sorted = deduplicateById([...newGrades]).sort((a, b) => {
-            const timeA = (a as any).createdAt || 0;
-            const timeB = (b as any).createdAt || 0;
-            if (timeA !== timeB) return timeA - timeB;
-            return a.name.localeCompare(b.name, "ar");
-          });
-          setGrades(sorted);
-        });
-
-        // 3. Subscribe to Classes
-        unsubClasses = subscribeToClasses((newClasses) => {
-          const sorted = deduplicateClasses([...newClasses]).sort((a, b) => {
-            const numA = getNumberFromName(a.name);
-            const numB = getNumberFromName(b.name);
-            if (numA !== numB) return numA - numB;
-            return a.name.localeCompare(b.name, "ar");
-          });
-          setClasses(sorted);
-        });
-
-        // 4. Subscribe to Teachers
-        unsubTeachers = subscribeToTeachers((newTeachers) => {
-          const sorted = deduplicateById([...newTeachers]).sort((a, b) => a.name.localeCompare(b.name, "ar"));
-          setTeachers(sorted);
-        });
-
-        // 5. Subscribe to Students
-        unsubStudents = subscribeToStudents((newStudents) => {
-          setStudents(deduplicateById(newStudents));
-        });
-
-      } catch (err) {
-        console.error("Error doing initial database load:", err);
-        if (active) {
-          setLoading(false);
-        }
-      }
-    };
-
-    initialize();
+      // Turn off loading spinner quickly
+      setTimeout(() => setLoading(false), 250);
+    } catch (err) {
+      console.error("Error doing database subscriptions:", err);
+      setLoading(false);
+    }
 
     return () => {
-      active = false;
       if (unsubSchool) (unsubSchool as () => void)();
       if (unsubGrades) (unsubGrades as () => void)();
       if (unsubClasses) (unsubClasses as () => void)();

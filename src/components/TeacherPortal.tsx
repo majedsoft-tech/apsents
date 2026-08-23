@@ -357,7 +357,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
     setIsBulkSelected(true);
   };
 
-  // Save attendance
+  // Save attendance (Ultra-fast instant save)
   const handleSaveAttendance = async () => {
     if (!selectedTeacherId || !selectedGradeId || !selectedClassId) {
       setSaveStatus({ type: "error", message: "الرجاء اختيار المعلم والصف والفصل أولاً" });
@@ -366,9 +366,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
     setAttendanceLoading(true);
     setSaveStatus(null);
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري حفظ وتوثيق سجل الغياب سحابياً..." });
-    }
     try {
       const presentIds = students
           .map(s => s.id)
@@ -386,7 +383,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
         isNoAbsence: absentStudentIds.length === 0 && lateStudentIds.length === 0
       });
 
-      setSaveStatus({ type: "success", message: "تم حفظ الغياب بنجاح! 💾" });
+      setSaveStatus({ type: "success", message: "تم حفظ وتوثيق الغياب بنجاح! 💾" });
       setSavedAbsentIds(absentStudentIds);
       setHasRecord(true);
       setIsDirty(false);
@@ -399,9 +396,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setSaveStatus({ type: "error", message: "حدث خطأ أثناء الحفظ، يرجى المحاولة لاحقاً" });
     } finally {
       setAttendanceLoading(false);
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -430,9 +424,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
     setBehaviorLoading(true);
     setBehaviorSaveStatus(null);
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: "جاري حفظ وتوثيق مخالفة السلوك للطالب..." });
-    }
     try {
       await saveBehaviorRecord({
         studentId: selectedStudentId,
@@ -453,7 +444,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setIsAddFormOpen(false);
       
       // Reload all behaviors to update list counts
-      await loadAllBehaviorsData();
+      loadAllBehaviorsData().catch(console.error);
       
       if (onRefreshStats) onRefreshStats();
 
@@ -463,9 +454,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setBehaviorSaveStatus({ type: "error", message: "حدث خطأ أثناء الحفظ" });
     } finally {
       setBehaviorLoading(false);
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -487,9 +475,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
     setBehaviorLoading(true);
     setBehaviorSaveStatus(null);
-    if (setGlobalProgress) {
-      setGlobalProgress({ active: true, type: "save", label: `جاري حفظ عدد ${totalPendingBehaviorsCount} سلوك معلق لجميع الطلاب...` });
-    }
 
     try {
       const todayStr = getTodayDateString();
@@ -520,7 +505,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setBehaviorSaveStatus({ type: "success", message: "تم حفظ جميع السلوكيات بنجاح! 💾" });
 
       // Reload all behaviors
-      await loadAllBehaviorsData();
+      loadAllBehaviorsData().catch(console.error);
 
       if (onRefreshStats) onRefreshStats();
 
@@ -530,9 +515,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setBehaviorSaveStatus({ type: "error", message: "حدث خطأ أثناء حفظ السلوكيات، يرجى المحاولة لاحقاً" });
     } finally {
       setBehaviorLoading(false);
-      if (setGlobalProgress) {
-        setGlobalProgress({ active: false, type: null, label: "" });
-      }
     }
   };
 
@@ -547,15 +529,13 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
   return (
     <div className="flex flex-col space-y-4 pb-36">
-      {/* Title, App Header & Filter Options Panel (Unified) */}
+      {/* Title & Teacher/Period Options Panel */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-0 relative overflow-hidden flex flex-col">
         {/* Title Header Part with elegant background color */}
         <div className="text-center relative bg-gradient-to-r from-blue-900 via-indigo-950 to-blue-950 text-white rounded-t-2xl rounded-b-none p-5 shadow-sm overflow-hidden">
           <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-8 -mt-8"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full -ml-8 -mb-8"></div>
           
-          {/* Admin Panel button was removed per user request */}
-
           <h1 className="text-xl md:text-2xl font-black text-amber-300 mb-1">{schoolName || "البوابة الرقمية للمدرسة"}</h1>
           <div className="flex items-center justify-center gap-1.5 text-blue-100 font-bold text-xs md:text-sm mb-2.5">
             <span>نظام تسجيل الغياب والسلوك</span>
@@ -567,8 +547,8 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
           </div>
         </div>
 
-        {/* Dropdowns / Filter Options Selection Part with premium custom background color */}
-        <div className="bg-slate-50/90 p-5 rounded-b-2xl rounded-t-none grid grid-cols-2 gap-3.5 text-right border-2 border-indigo-500/80 shadow-md">
+        {/* Teacher and Period Selection */}
+        <div className="bg-slate-50/90 p-4 sm:p-5 rounded-b-2xl rounded-t-none grid grid-cols-2 gap-3.5 text-right border-t border-slate-100">
           {/* Teacher Select */}
           <div className="col-span-2">
             <div className="flex items-center justify-between mb-1.5">
@@ -599,70 +579,6 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
             </select>
           </div>
 
-          {/* Grade Select Row */}
-          <div className="col-span-2 space-y-1.5">
-            <label className="block text-xs font-black text-slate-700">الصف والفصل</label>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
-              {grades.map((g, idx) => {
-                const isSelected = selectedGradeId === g.id;
-                const gradeShortName = g.name.replace(/^الصف\s+/, "").replace(/^صف\s+/, "");
-                return (
-                  <button
-                    key={`${g.id}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedGradeId(g.id);
-                      const gradeClasses = classes.filter(c => c.gradeId === g.id);
-                      if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
-                        setSelectedClassId(gradeClasses[0].id);
-                      }
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.02] active:scale-95 ${
-                      isSelected
-                        ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
-                        : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span>🏫</span>
-                    <span>{gradeShortName}</span>
-                  </button>
-                );
-              })}
-              {grades.length === 0 && (
-                <p className="text-2xs text-slate-400 font-bold py-1">لا توجد صفوف دراسية</p>
-              )}
-            </div>
-          </div>
-
-          {/* Class Select Row (Separate Line, No Divider) */}
-          {selectedGradeId && (
-            <div className="col-span-2 space-y-1.5">
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
-                {filteredClasses.map((c, idx) => {
-                  const isSelected = selectedClassId === c.id;
-                  const classNum = c.name.replace(/^الفصل\s*/, "").replace(/^فصل\s*/, "").trim();
-                  return (
-                    <button
-                      key={`${c.id}-${idx}`}
-                      type="button"
-                      onClick={() => setSelectedClassId(c.id)}
-                      className={`flex items-center justify-center min-w-[38px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
-                        isSelected
-                          ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
-                          : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50/70"
-                      }`}
-                    >
-                      <span>{classNum || c.name}</span>
-                    </button>
-                  );
-                })}
-                {filteredClasses.length === 0 && (
-                  <p className="text-2xs text-slate-400 font-bold py-1">لا توجد فصول تابعة لهذا الصف</p>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Period Select */}
           <div className="col-span-2">
             <label className="block text-xs font-black text-slate-700 mb-1.5">الحصة</label>
@@ -672,7 +588,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                   key={p}
                   type="button"
                   onClick={() => setSelectedPeriod(p)}
-                  className={`text-xs py-2 px-1 rounded-lg font-black border transition ${
+                  className={`text-xs py-2 px-1 rounded-lg font-black border transition cursor-pointer ${
                     selectedPeriod === p
                       ? "bg-blue-600 text-white border-blue-600 shadow-sm"
                       : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
@@ -686,14 +602,85 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
         </div>
       </div>
 
-      {/* UNIFIED STICKY CONTROL & STATS HUB (دمج الإحصائيات وأزرار التحكم السريع في عنصر واحد) */}
+      {/* STICKY GRADE & CLASS SELECTION PANEL (الصف والفصل مثبت في الأعلى عند السكروول) */}
       <div 
         ref={firstStickyRef}
         style={{ top: "var(--header-height, 0px)" }}
-        className="sticky top-0 z-30 flex flex-col mb-4 pt-1 pb-1 bg-gradient-to-b from-slate-100 via-slate-100/90 to-transparent"
+        className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur-md p-4 rounded-2xl text-right border-2 border-indigo-500/80 shadow-md space-y-3 transition-all"
       >
-        {/* Unified Card Container */}
-        <div className={`bg-white/95 backdrop-blur-md rounded-2xl shadow-md border border-slate-200/90 p-3.5 flex flex-col gap-2.5 transition-all duration-300 ${
+        {/* Grade Select Row */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-black text-slate-700">الصف والفصل</label>
+            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-full border border-indigo-200/80">
+              📌 مثبت أثناء التمرير
+            </span>
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
+            {grades.map((g, idx) => {
+              const isSelected = selectedGradeId === g.id;
+              const gradeShortName = g.name.replace(/^الصف\s+/, "").replace(/^صف\s+/, "");
+              return (
+                <button
+                  key={`${g.id}-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedGradeId(g.id);
+                    const gradeClasses = classes.filter(c => c.gradeId === g.id);
+                    if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
+                      setSelectedClassId(gradeClasses[0].id);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.02] active:scale-95 ${
+                    isSelected
+                      ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <span>🏫</span>
+                  <span>{gradeShortName}</span>
+                </button>
+              );
+            })}
+            {grades.length === 0 && (
+              <p className="text-2xs text-slate-400 font-bold py-1">لا توجد صفوف دراسية</p>
+            )}
+          </div>
+        </div>
+
+        {/* Class Select Row (Separate Line, No Divider) */}
+        {selectedGradeId && (
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
+              {filteredClasses.map((c, idx) => {
+                const isSelected = selectedClassId === c.id;
+                const classNum = c.name.replace(/^الفصل\s*/, "").replace(/^فصل\s*/, "").trim();
+                return (
+                  <button
+                    key={`${c.id}-${idx}`}
+                    type="button"
+                    onClick={() => setSelectedClassId(c.id)}
+                    className={`flex items-center justify-center min-w-[38px] px-3 py-1.5 rounded-xl text-xs sm:text-sm font-black border transition-all duration-150 cursor-pointer shadow-3xs hover:shadow-md hover:scale-[1.03] active:scale-95 ${
+                      isSelected
+                        ? "bg-[#5046e5] text-white border-[#5046e5] shadow-sm shadow-indigo-500/20"
+                        : "bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50/70"
+                    }`}
+                  >
+                    <span>{classNum || c.name}</span>
+                  </button>
+                );
+              })}
+              {filteredClasses.length === 0 && (
+                <p className="text-2xs text-slate-400 font-bold py-1">لا توجد فصول تابعة لهذا الصف</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* QUICK STATS & SELECTION SUMMARY CARD */}
+      <div className="flex flex-col mb-1">
+        <div className={`bg-white/95 rounded-2xl shadow-sm border border-slate-200/90 p-3.5 flex flex-col gap-2.5 transition-all duration-300 ${
           activeTab === "attendance" ? "border-t-4 border-t-blue-600" : "border-t-4 border-t-amber-500"
         }`}>
           {/* Quick stats (Attendance & Absence side by side) */}
@@ -750,15 +737,13 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab("behavior")}
-              className={`relative flex-1 flex items-center justify-center gap-1.5 py-3.5 rounded-tl-[28px] rounded-tr-lg rounded-b-none text-xs md:text-sm font-black transition-all duration-300 cursor-pointer border border-b-0 -mr-4 ${
-                activeTab === "behavior"
-                  ? "bg-amber-50 text-amber-800 border-amber-200 border-t-3 border-t-amber-600 shadow-[0_-4px_12px_rgba(245,158,11,0.08)] z-20 scale-[1.02]"
-                  : "bg-slate-100 text-slate-500 hover:bg-slate-200/80 hover:text-slate-700 border-slate-200/70 z-10"
-              }`}
+              disabled
+              title="رصد السلوك غير فعّال حالياً"
+              className="relative flex-1 flex items-center justify-center gap-1.5 py-3.5 rounded-tl-[28px] rounded-tr-lg rounded-b-none text-xs md:text-sm font-bold border border-b-0 -mr-4 bg-slate-100/60 text-slate-400 border-slate-200/60 cursor-not-allowed opacity-60 select-none z-10"
             >
-              <span>📝</span>
-              <span>رصد السلوك</span>
+              <span className="opacity-60">📝</span>
+              <span className="line-through decoration-slate-400/70">رصد السلوك</span>
+              <span className="text-[10px] bg-slate-200/80 text-slate-500 font-bold px-1.5 py-0.5 rounded-full mr-1">معطّل</span>
             </button>
           </div>
         </div>
@@ -830,30 +815,30 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                     <div
                       key={`${student.id}-${idx}`}
                       onClick={() => toggleAttendance(student.id)}
-                      className={`flex items-center justify-between px-4 py-3.5 cursor-pointer transition select-none ${rowBg}`}
+                      className={`flex items-center justify-between px-4 py-3.5 sm:py-3.5 min-h-[48px] cursor-pointer transition select-none active:scale-[0.99] active:bg-slate-100/80 ${rowBg}`}
                     >
                       <div className="flex items-center gap-3">
-                        <span className="text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                        <span className="text-xs font-black w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 text-slate-700 shrink-0">
                           {idx + 1}
                         </span>
-                        <span className="text-sm font-bold text-slate-800">
+                        <span className="text-xs sm:text-sm font-bold text-slate-800">
                           {student.name}
                         </span>
                       </div>
 
                       <div className="transition-all duration-200">
                         {isAbsent ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-extrabold text-rose-600 bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg shadow-2xs animate-in fade-in zoom-in duration-150">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-black text-rose-700 bg-rose-100 border border-rose-200 px-3 py-1.5 rounded-xl shadow-2xs animate-in fade-in zoom-in duration-150">
                             <span>غائب</span>
                             <span>📕</span>
                           </span>
                         ) : isLate ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-extrabold text-amber-600 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-lg shadow-2xs animate-in fade-in zoom-in duration-150">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-black text-amber-800 bg-amber-100 border border-amber-300 px-3 py-1.5 rounded-xl shadow-2xs animate-in fade-in zoom-in duration-150">
                             <span>متأخر</span>
                             <span>⏳</span>
                           </span>
                         ) : isPresent ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg shadow-2xs animate-in fade-in zoom-in duration-150">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl shadow-2xs animate-in fade-in zoom-in duration-150">
                             <span>حاضر</span>
                             <span>📗</span>
                           </span>
