@@ -458,6 +458,10 @@ export async function resolveOwnerProfileFromDb(ownerIdOrEmail: string): Promise
     return userProfileAliasCache.get(key)!;
   }
 
+  if (isQuotaExhausted()) {
+    return null;
+  }
+
   try {
     // 1. Try querying registered_users by uid
     const qUid = query(collection(db, USERS_COLL), where("uid", "==", ownerIdOrEmail));
@@ -522,8 +526,8 @@ export async function resolveOwnerProfileFromDb(ownerIdOrEmail: string): Promise
       }
       return profile;
     }
-  } catch (e) {
-    // Ignore and fallback gracefully
+  } catch (e: any) {
+    handleFirestoreError(e);
   }
 
   return null;
@@ -618,10 +622,27 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
 
 // Quota and network protection state
 let quotaExhaustedUntil = 0;
+let reenableTimer: any = null;
+
+// Initialize quota protection from localStorage if previously set
 if (typeof window !== "undefined") {
   try {
-    // Clear legacy permanent lockout
-    localStorage.removeItem("firebase_quota_exhausted_until");
+    const savedBackoff = localStorage.getItem("firestore_quota_backoff_until");
+    if (savedBackoff) {
+      const parsed = parseInt(savedBackoff, 10);
+      if (parsed && parsed > Date.now()) {
+        quotaExhaustedUntil = parsed;
+        disableNetwork(db).catch(() => {});
+        const remaining = parsed - Date.now();
+        reenableTimer = setTimeout(() => {
+          quotaExhaustedUntil = 0;
+          try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
+          enableNetwork(db).catch(() => {});
+        }, remaining);
+      } else {
+        localStorage.removeItem("firestore_quota_backoff_until");
+      }
+    }
   } catch (_) {}
 }
 
@@ -629,24 +650,60 @@ export function isQuotaExhausted(): boolean {
   if (quotaExhaustedUntil > 0 && Date.now() < quotaExhaustedUntil) {
     return true;
   }
+  if (quotaExhaustedUntil > 0 && Date.now() >= quotaExhaustedUntil) {
+    quotaExhaustedUntil = 0;
+    if (typeof window !== "undefined") {
+      try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
+    }
+    enableNetwork(db).catch(() => {});
+  }
   return false;
 }
 
 export function handleFirestoreError(err: any) {
   if (!err) return;
-  if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
+  const isQuota = err?.code === "resource-exhausted" || 
+    (typeof err?.message === "string" && (
+      err.message.toLowerCase().includes("quota") || 
+      err.message.toLowerCase().includes("resource-exhausted") ||
+      err.message.includes("Quota exceeded")
+    ));
+  if (isQuota) {
     markQuotaExhausted();
   }
 }
 
 export function markQuotaExhausted() {
-  // Graceful short backoff (15 seconds) for read queries only
-  quotaExhaustedUntil = Date.now() + 15 * 1000;
+  // Back off from network calls for 5 minutes and rely completely on local cache & IndexedDB
+  const backoffDuration = 5 * 60 * 1000;
+  quotaExhaustedUntil = Date.now() + backoffDuration;
+  
   if (typeof window !== "undefined") {
     try {
+      localStorage.setItem("firestore_quota_backoff_until", String(quotaExhaustedUntil));
       window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: true } }));
     } catch (_) {}
   }
+
+  // Gracefully disable network so Firestore stops logging backoff delay retries
+  disableNetwork(db).catch(() => {});
+
+  // Unsubscribe all active listeners to stop pending socket traffic
+  collectionHubs.forEach(hub => {
+    if (hub.unsub) {
+      try { hub.unsub(); } catch (_) {}
+      hub.unsub = null;
+    }
+  });
+
+  if (reenableTimer) clearTimeout(reenableTimer);
+  reenableTimer = setTimeout(() => {
+    quotaExhaustedUntil = 0;
+    if (typeof window !== "undefined") {
+      try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
+    }
+    enableNetwork(db).catch(() => {});
+  }, backoffDuration);
 }
 
 // Update Morning Delay Reason (for Admin and Supervisors)
@@ -1706,6 +1763,13 @@ export async function getSchoolName(): Promise<string> {
     if (localName) return localName;
   }
 
+  if (isQuotaExhausted()) {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(`school_name_${uid}`) || localStorage.getItem("school_name_cached") || "";
+    }
+    return "";
+  }
+
   try {
     const querySnapshot = await getDocs(collection(db, SETTINGS_COLL));
     let schoolNameVal = "";
@@ -1722,7 +1786,8 @@ export async function getSchoolName(): Promise<string> {
       localStorage.setItem("school_name_cached", schoolNameVal);
     }
     return schoolNameVal;
-  } catch (err) {
+  } catch (err: any) {
+    handleFirestoreError(err);
     if (typeof window !== "undefined") {
       return localStorage.getItem(`school_name_${uid}`) || localStorage.getItem("school_name_cached") || "";
     }
@@ -2002,6 +2067,33 @@ export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
     const users: RegisteredUser[] = [];
     const seenUids = new Set<string>();
 
+    if (isQuotaExhausted()) {
+      const cachedUsers = getLocalItems(USERS_COLL);
+      cachedUsers.forEach(u => {
+        if (u && u.uid && !seenUids.has(u.uid)) {
+          seenUids.add(u.uid);
+          users.push(u);
+        }
+      });
+      if (users.length === 0) {
+        const eff = getEffectiveUidAndEmail();
+        if (eff && eff.uid) {
+          users.push({
+            id: eff.uid,
+            uid: eff.uid,
+            email: eff.email || "school_admin@school.com",
+            displayName: activeUserProxy?.displayName || "مدير المدرسة الحالي",
+            photoURL: "",
+            lastLogin: Date.now(),
+            createdAt: Date.now(),
+            schoolName: (typeof window !== "undefined" ? (localStorage.getItem(`school_name_${eff.uid}`) || localStorage.getItem("school_name_cached")) : "") || "المدرسة الرئيسية",
+            status: "نشط"
+          });
+        }
+      }
+      return users;
+    }
+
     try {
       const querySnapshot = await getDocs(collection(db, USERS_COLL));
       querySnapshot.forEach(docSnap => {
@@ -2022,8 +2114,9 @@ export async function getRegisteredUsers(): Promise<RegisteredUser[]> {
           });
         }
       });
-    } catch (permErr) {
-      // If Firestore security rules restrict reading USERS_COLL, read from local cache
+    } catch (permErr: any) {
+      handleFirestoreError(permErr);
+      // If Firestore security rules restrict reading USERS_COLL or quota is exhausted, read from local cache
       const cachedUsers = getLocalItems(USERS_COLL);
       cachedUsers.forEach(u => {
         if (u && u.uid && !seenUids.has(u.uid)) {

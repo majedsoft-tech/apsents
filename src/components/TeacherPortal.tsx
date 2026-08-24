@@ -27,7 +27,8 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
-  Loader2
+  Loader2,
+  X
 } from "lucide-react";
 
 interface TeacherPortalProps {
@@ -104,6 +105,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
   const [saveStatus, setSaveStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [hasRecord, setHasRecord] = useState<boolean>(false);
+  const [showSaveAttendanceModal, setShowSaveAttendanceModal] = useState<boolean>(false);
 
   // Behavior states
   const [selectedStudentId, setSelectedStudentId] = useState<string>("");
@@ -357,15 +359,21 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
     setIsBulkSelected(true);
   };
 
-  // Save attendance (Ultra-fast instant save)
+  // Save attendance (Ultra-fast instant save executed directly with animated status popup)
   const handleSaveAttendance = async () => {
     if (!selectedTeacherId || !selectedGradeId || !selectedClassId) {
       setSaveStatus({ type: "error", message: "الرجاء اختيار المعلم والصف والفصل أولاً" });
       return;
     }
+    if (students.length === 0) {
+      setSaveStatus({ type: "error", message: "لا يوجد طلاب في الفصل المحدد" });
+      return;
+    }
 
     setAttendanceLoading(true);
     setSaveStatus(null);
+    setShowSaveAttendanceModal(true);
+
     try {
       const presentIds = students
           .map(s => s.id)
@@ -389,11 +397,19 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       setIsDirty(false);
       if (onRefreshStats) onRefreshStats();
       
-      // Auto clear message after 3s
+      // Auto close save popup smoothly after displaying success
+      setTimeout(() => {
+        setShowSaveAttendanceModal(false);
+      }, 1200);
+
+      // Auto clear inline message after 3s
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (error) {
       console.error("Error saving attendance:", error);
       setSaveStatus({ type: "error", message: "حدث خطأ أثناء الحفظ، يرجى المحاولة لاحقاً" });
+      setTimeout(() => {
+        setShowSaveAttendanceModal(false);
+      }, 2000);
     } finally {
       setAttendanceLoading(false);
     }
@@ -1277,6 +1293,58 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
                 : `حفظ السلوكيات لـ (${Object.keys(pendingBehaviors).length} طلاب) 💾`}
             </span>
           </motion.button>
+        </div>
+      )}
+
+      {/* POPUP MODAL: DIRECT INSTANT SAVING STATUS POPUP (نافذة منبثقة فورية لحفظ الغياب مباشرة) */}
+      {showSaveAttendanceModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center text-center p-6 space-y-4" 
+            dir="rtl"
+          >
+            {attendanceLoading ? (
+              <div className="flex flex-col items-center justify-center py-4 space-y-3">
+                <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center relative shadow-inner">
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-slate-800">جاري حفظ وتوثيق الغياب...</h3>
+                  <p className="text-xs text-slate-500 font-medium">يتم رصد السجلات ومزامنة الحصص لحظياً</p>
+                </div>
+              </div>
+            ) : saveStatus?.type === "error" ? (
+              <div className="flex flex-col items-center justify-center py-4 space-y-3">
+                <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shadow-inner">
+                  <X className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-rose-800">تعذر الحفظ</h3>
+                  <p className="text-xs text-rose-600 font-medium">{saveStatus.message}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-4 space-y-3">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
+                  <CheckCircle className="w-8 h-8" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-emerald-800">تم حفظ الغياب بنجاح! 💾</h3>
+                  <p className="text-xs text-slate-600 font-bold">
+                    {absentStudentIds.length === 0 
+                      ? "جميع الطلاب حضور 100% ✨" 
+                      : `تم رصد غياب ${absentStudentIds.length} طالب بنجاح 📋`}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-2xs font-extrabold text-slate-600">
+                  {grades.find(g => g.id === selectedGradeId)?.name} - {classes.find(c => c.id === selectedClassId)?.name} | {selectedPeriod}
+                </div>
+              </div>
+            )}
+          </motion.div>
         </div>
       )}
     </div>
