@@ -2123,6 +2123,7 @@ export async function deleteRegisteredUser(uid: string, email: string, wipeSchoo
         STUDENTS_COLL,
         ATTENDANCE_COLL,
         BEHAVIORS_COLL,
+        MORNING_DELAYS_COLL,
         SETTINGS_COLL
       ];
 
@@ -2147,6 +2148,155 @@ export async function deleteRegisteredUser(uid: string, email: string, wipeSchoo
     console.error("Error deleting registered user and wiping data:", err);
     throw err;
   }
+}
+
+/**
+ * Completely purges ALL server data, temporary cached records, and previously deleted items across ALL Firestore collections and local storage.
+ */
+export async function purgeAllServerAndTemporaryData(preserveSuperAdmin: boolean = true): Promise<{ deletedCount: number }> {
+  let deletedCount = 0;
+  const collectionsToClear = [
+    GRADES_COLL,
+    CLASSES_COLL,
+    TEACHERS_COLL,
+    STUDENTS_COLL,
+    ATTENDANCE_COLL,
+    BEHAVIORS_COLL,
+    MORNING_DELAYS_COLL,
+    SETTINGS_COLL,
+    "student_passwords"
+  ];
+
+  if (!preserveSuperAdmin) {
+    collectionsToClear.push(USERS_COLL);
+  }
+
+  // 1. Delete all documents in chunks from Firestore
+  for (const colName of collectionsToClear) {
+    try {
+      const snap = await getDocs(collection(db, colName));
+      if (!snap.empty) {
+        const docs = snap.docs;
+        const chunkSize = 400;
+        for (let i = 0; i < docs.length; i += chunkSize) {
+          const chunk = docs.slice(i, i + chunkSize);
+          const batch = writeBatch(db);
+          chunk.forEach(d => {
+            batch.delete(d.ref);
+            deletedCount++;
+          });
+          await batch.commit();
+        }
+      }
+    } catch (e) {
+      console.warn(`Error purging collection ${colName}:`, e);
+    }
+  }
+
+  // 2. Clear all local browser storage caches
+  if (typeof window !== "undefined") {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (
+          key.startsWith("school_offline_cache_") ||
+          key.startsWith("school_name_") ||
+          key.startsWith("user_alias_") ||
+          key === "school_name_cached" ||
+          key === "firestore_quota_backoff_until" ||
+          key === "linked_school_owner_id"
+        )) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
+  }
+
+  // 3. Reset in-memory collection hubs and notify all subscribers with empty array
+  collectionHubs.forEach((hub, colName) => {
+    hub.callbacks.forEach(cb => {
+      try { cb([]); } catch (_) {}
+    });
+  });
+
+  // 4. Broadcast instant clear to all other tabs and windows
+  if (realTimeSyncChannel) {
+    try {
+      collectionsToClear.forEach(colName => {
+        realTimeSyncChannel?.postMessage({
+          colName,
+          items: [],
+          timestamp: Date.now()
+        });
+      });
+    } catch (_) {}
+  }
+
+  return { deletedCount };
+}
+
+/**
+ * Scans for and removes any orphaned temporary/deleted records (attendance/behaviors/delays referring to deleted students or classes)
+ */
+export async function purgeDeletedAndOrphanedData(): Promise<{ purgedCount: number }> {
+  let purgedCount = 0;
+  try {
+    const [gradesSnap, classesSnap, studentsSnap, teachersSnap, attSnap, behSnap, delaySnap] = await Promise.all([
+      getDocs(collection(db, GRADES_COLL)),
+      getDocs(collection(db, CLASSES_COLL)),
+      getDocs(collection(db, STUDENTS_COLL)),
+      getDocs(collection(db, TEACHERS_COLL)),
+      getDocs(collection(db, ATTENDANCE_COLL)),
+      getDocs(collection(db, BEHAVIORS_COLL)),
+      getDocs(collection(db, MORNING_DELAYS_COLL))
+    ]);
+
+    const validGradeIds = new Set(gradesSnap.docs.map(d => d.id));
+    const validClassIds = new Set(classesSnap.docs.map(d => d.id));
+    const validStudentIds = new Set(studentsSnap.docs.map(d => d.id));
+
+    const batch = writeBatch(db);
+    let batchOperations = 0;
+
+    // Check attendance records
+    attSnap.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if ((data.gradeId && !validGradeIds.has(data.gradeId)) || (data.classId && !validClassIds.has(data.classId))) {
+        batch.delete(docSnap.ref);
+        purgedCount++;
+        batchOperations++;
+      }
+    });
+
+    // Check behavior records
+    behSnap.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.studentId && !validStudentIds.has(data.studentId)) {
+        batch.delete(docSnap.ref);
+        purgedCount++;
+        batchOperations++;
+      }
+    });
+
+    // Check morning delays
+    delaySnap.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.studentId && !validStudentIds.has(data.studentId)) {
+        batch.delete(docSnap.ref);
+        purgedCount++;
+        batchOperations++;
+      }
+    });
+
+    if (batchOperations > 0) {
+      await batch.commit();
+    }
+  } catch (e) {
+    console.warn("Error purging orphaned data:", e);
+  }
+  return { purgedCount };
 }
 
 

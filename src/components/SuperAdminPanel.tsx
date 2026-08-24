@@ -3,7 +3,9 @@ import { RegisteredUser } from "../types";
 import { 
   getRegisteredUsers, 
   updateUserStatus, 
-  deleteRegisteredUser 
+  deleteRegisteredUser,
+  purgeAllServerAndTemporaryData,
+  purgeDeletedAndOrphanedData
 } from "../dbService";
 import { 
   Search, 
@@ -169,15 +171,69 @@ export default function SuperAdminPanel({
             </p>
           </div>
           
-          <button
-            type="button"
-            onClick={loadUsers}
-            disabled={loading}
-            className="flex items-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-2xl text-xs font-black transition active:scale-95 cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-blue-400" : ""}`} />
-            <span>تحديث البيانات الحية</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap justify-center md:justify-end">
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm("هل تريد بالتأكيد تنظيف ومسح كافة السجلات المحذوفة والمؤقتة العالقة في السيرفر؟")) return;
+                if (setGlobalProgress) {
+                  setGlobalProgress({ active: true, type: "delete", label: "جاري تنظيف السجلات المحذوفة والمؤقتة في السيرفر..." });
+                }
+                try {
+                  const res = await purgeDeletedAndOrphanedData();
+                  showMessage(`تم تنظيف ${res.purgedCount} سجل مؤقت/محذوف من السيرفر بنجاح.`);
+                  loadUsers();
+                  if (onRefreshData) onRefreshData().catch(console.error);
+                } catch (e) {
+                  showMessage("حدث خطأ أثناء تنظيف السيرفر.", "error");
+                } finally {
+                  if (setGlobalProgress) {
+                    setGlobalProgress({ active: false, type: null, label: "" });
+                  }
+                }
+              }}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-2xl text-xs font-black transition active:scale-95 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>تنظيف السجلات المحذوفة</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm("تحذير: هل تريد مسح وتصفير كافة بيانات السيرفر والتخزين المؤقت بالكامل (الصفوف، الفصول، الطلاب، المعلمين، الغياب، السلوك)؟")) return;
+                if (setGlobalProgress) {
+                  setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتصفير كافة بيانات السيرفر والمؤقتة..." });
+                }
+                try {
+                  const res = await purgeAllServerAndTemporaryData(true);
+                  showMessage(`تم تصفير ومسح كافة بيانات السيرفر والتخزين المؤقت بنجاح (${res.deletedCount} مستند).`);
+                  loadUsers();
+                  if (onRefreshData) onRefreshData().catch(console.error);
+                } catch (e) {
+                  showMessage("حدث خطأ أثناء تصفير بيانات السيرفر.", "error");
+                } finally {
+                  if (setGlobalProgress) {
+                    setGlobalProgress({ active: false, type: null, label: "" });
+                  }
+                }
+              }}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-2xl text-xs font-black transition active:scale-95 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>مسح شامل لبيانات السيرفر</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={loadUsers}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-2xl text-xs font-black transition active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-blue-400" : ""}`} />
+              <span>تحديث البيانات</span>
+            </button>
+          </div>
         </div>
       </div>
 

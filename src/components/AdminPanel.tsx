@@ -27,7 +27,9 @@ import {
   addTeachersBatch,
   subscribeToAllAttendanceRecords,
   subscribeToAllBehaviorRecords,
-  subscribeToAllMorningDelayRecords
+  subscribeToAllMorningDelayRecords,
+  purgeAllServerAndTemporaryData,
+  purgeDeletedAndOrphanedData
 } from "../dbService";
 import { 
   Lock, 
@@ -4006,43 +4008,66 @@ export default function AdminPanel({
               </div>
 
               {/* Bottom Action Footer */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-6 flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    confirmAction(
-                      "مسح وإعادة تعيين كافة الفصول والطلاب",
-                      "هل أنت متأكد من مسح وإعادة تعيين كافة الصفوف والفصول والطلاب؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف جميع البيانات المتعلقة بهم.",
-                      async () => {
-                        if (setGlobalProgress) {
-                          setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وإعادة تعيين الهيكل السحابي..." });
-                        }
-                        try {
-                          for (const g of grades) {
-                            await deleteGrade(g.id);
-                          }
-                          setGrades([]);
-                          setClasses([]);
-                          setStudents([]);
-                          showMessage("تم مسح وإعادة تعيين كافة الصفوف والفصول والطلاب بنجاح!");
-                          onRefreshData().catch(console.error);
-                        } catch (e) {
-                          showMessage("حدث خطأ أثناء عملية المسح", "error");
-                        } finally {
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-6 flex-wrap gap-3" dir="rtl">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      confirmAction(
+                        "مسح شامل وإعادة تعيين لكافة بيانات السيرفر والمؤقتة",
+                        "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر.",
+                        async () => {
                           if (setGlobalProgress) {
-                            setGlobalProgress({ active: false, type: null, label: "" });
+                            setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة..." });
                           }
+                          try {
+                            const res = await purgeAllServerAndTemporaryData(true);
+                            setGrades([]);
+                            setClasses([]);
+                            setStudents([]);
+                            setTeachers([]);
+                            showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة بنجاح (${res.deletedCount} مستند)!`);
+                            if (onRefreshData) onRefreshData().catch(console.error);
+                          } catch (e) {
+                            showMessage("حدث خطأ أثناء عملية المسح الشامل", "error");
+                          } finally {
+                            if (setGlobalProgress) {
+                              setGlobalProgress({ active: false, type: null, label: "" });
+                            }
+                          }
+                        }
+                      );
+                    }}
+                    className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>مسح وتصفير كامل بيانات السيرفر والمؤقتة</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (setGlobalProgress) {
+                        setGlobalProgress({ active: true, type: "delete", label: "جاري تنظيف السجلات المحذوفة والمؤقتة..." });
+                      }
+                      try {
+                        const res = await purgeDeletedAndOrphanedData();
+                        showMessage(`تم تنظيف وحذف ${res.purgedCount} سجل مؤقت/محذوف عالق من السيرفر بنجاح!`);
+                        if (onRefreshData) onRefreshData().catch(console.error);
+                      } catch (e) {
+                        showMessage("حدث خطأ أثناء تنظيف السجلات المؤقتة", "error");
+                      } finally {
+                        if (setGlobalProgress) {
+                          setGlobalProgress({ active: false, type: null, label: "" });
                         }
                       }
-                    );
-                  }}
-                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>مسح وإعادة تعيين كافة الفصول والطلاب</span>
-                </button>
-
-
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>تنظيف السجلات المحذوفة والمؤقتة العالقة</span>
+                  </button>
+                </div>
               </div>
             </div>
         </div>
@@ -4938,43 +4963,66 @@ export default function AdminPanel({
                 </div>
 
                 {/* Bottom Action Footer */}
-                <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-6 flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      confirmAction(
-                        "مسح وإعادة تعيين كافة الفصول والطلاب",
-                        "هل أنت متأكد من مسح وإعادة تعيين كافة الصفوف والفصول والطلاب؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف جميع البيانات المتعلقة بهم.",
-                        async () => {
-                          if (setGlobalProgress) {
-                            setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وإعادة تعيين الهيكل السحابي..." });
-                          }
-                          try {
-                            for (const g of grades) {
-                              await deleteGrade(g.id);
-                            }
-                            setGrades([]);
-                            setClasses([]);
-                            setStudents([]);
-                            showMessage("تم مسح وإعادة تعيين كافة الصفوف والفصول والطلاب بنجاح!");
-                            onRefreshData().catch(console.error);
-                          } catch (e) {
-                            showMessage("حدث خطأ أثناء عملية المسح", "error");
-                          } finally {
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-6 flex-wrap gap-3" dir="rtl">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        confirmAction(
+                          "مسح شامل وإعادة تعيين لكافة بيانات السيرفر والمؤقتة",
+                          "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر.",
+                          async () => {
                             if (setGlobalProgress) {
-                              setGlobalProgress({ active: false, type: null, label: "" });
+                              setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة..." });
                             }
+                            try {
+                              const res = await purgeAllServerAndTemporaryData(true);
+                              setGrades([]);
+                              setClasses([]);
+                              setStudents([]);
+                              setTeachers([]);
+                              showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة بنجاح (${res.deletedCount} مستند)!`);
+                              if (onRefreshData) onRefreshData().catch(console.error);
+                            } catch (e) {
+                              showMessage("حدث خطأ أثناء عملية المسح الشامل", "error");
+                            } finally {
+                              if (setGlobalProgress) {
+                                setGlobalProgress({ active: false, type: null, label: "" });
+                              }
+                            }
+                          }
+                        );
+                      }}
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>مسح وتصفير كامل بيانات السيرفر والمؤقتة</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (setGlobalProgress) {
+                          setGlobalProgress({ active: true, type: "delete", label: "جاري تنظيف السجلات المحذوفة والمؤقتة..." });
+                        }
+                        try {
+                          const res = await purgeDeletedAndOrphanedData();
+                          showMessage(`تم تنظيف وحذف ${res.purgedCount} سجل مؤقت/محذوف عالق من السيرفر بنجاح!`);
+                          if (onRefreshData) onRefreshData().catch(console.error);
+                        } catch (e) {
+                          showMessage("حدث خطأ أثناء تنظيف السجلات المؤقتة", "error");
+                        } finally {
+                          if (setGlobalProgress) {
+                            setGlobalProgress({ active: false, type: null, label: "" });
                           }
                         }
-                      );
-                    }}
-                    className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>مسح وإعادة تعيين كافة الفصول والطلاب</span>
-                  </button>
-
-
+                      }}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>تنظيف السجلات المحذوفة والمؤقتة العالقة</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
