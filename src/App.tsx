@@ -1599,7 +1599,7 @@ export default function App() {
               onRefreshData={handleRefreshData}
               activeSubTab={appMode === "stats-only" ? "stats" : adminTab}
               setActiveSubTab={setAdminTab}
-              isReadOnly={appMode === "stats-only"}
+              isReadOnly={false}
               onTodayStatsChange={setTodayCounts}
               schoolName={schoolName}
               onSchoolNameChange={handleSchoolNameChange}

@@ -827,31 +827,59 @@ export default function AdminPanel({
           // 1. Optimistically update local statistics in UI immediately (0ms)
           setTodayStats(prev => {
             if (!prev) return prev;
-            return {
-              ...prev,
-              rawList: prev.rawList.filter(item => {
+            const filterEntries = (list: any[]) => {
+              if (!Array.isArray(list)) return [];
+              return list.filter(item => {
+                if (!item) return false;
                 if (item.recordId !== recordId) return true;
                 if (isNoAbsenceDummy) return false;
-                return item.studentId !== studentId;
-              }),
-              totalAbsences: isAbsentType ? Math.max(0, prev.totalAbsences - 1) : prev.totalAbsences,
-              totalLate: !isAbsentType ? Math.max(0, prev.totalLate - 1) : prev.totalLate
+                return !(item.studentId === studentId && item.isAbsent === isAbsentType);
+              });
+            };
+
+            const updatedEntriesByGrade: Record<string, any[]> = {};
+            if (prev.entriesByGrade && typeof prev.entriesByGrade === "object") {
+              Object.keys(prev.entriesByGrade).forEach(key => {
+                updatedEntriesByGrade[key] = filterEntries(prev.entriesByGrade[key]);
+              });
+            }
+
+            return {
+              ...prev,
+              absentCount: isAbsentType ? Math.max(0, (prev.absentCount || 0) - 1) : (prev.absentCount || 0),
+              grade1Entries: filterEntries(prev.grade1Entries),
+              grade2Entries: filterEntries(prev.grade2Entries),
+              grade3Entries: filterEntries(prev.grade3Entries),
+              entriesByGrade: updatedEntriesByGrade
             };
           });
 
           // Optimistically update absence search results table if open
           setSearchAttendanceResult(prev => {
-            if (!prev) return prev;
-            return prev.map(rec => {
-              if (rec.id !== recordId) return rec;
-              if (isNoAbsenceDummy) return null as any;
-              return {
-                ...rec,
-                absent: isAbsentType ? (rec.absent || []).filter(id => id !== studentId) : rec.absent,
-                late: !isAbsentType ? (rec.late || []).filter(id => id !== studentId) : rec.late
-              };
-            }).filter(Boolean);
+            if (!Array.isArray(prev)) return [];
+            return prev.filter(item => {
+              if (!item) return false;
+              if (item.recordId !== recordId) return true;
+              if (isNoAbsenceDummy) return false;
+              return !(item.studentId === studentId && item.isAbsent === isAbsentType);
+            });
           });
+
+          // Update cached ref
+          if (Array.isArray(cachedAttendanceRef.current)) {
+            if (isNoAbsenceDummy) {
+              cachedAttendanceRef.current = cachedAttendanceRef.current.filter(r => r && r.id !== recordId);
+            } else {
+              cachedAttendanceRef.current = cachedAttendanceRef.current.map(r => {
+                if (!r || r.id !== recordId) return r;
+                return {
+                  ...r,
+                  absent: isAbsentType && Array.isArray(r.absent) ? r.absent.filter(id => id !== studentId) : r.absent,
+                  late: !isAbsentType && Array.isArray(r.late) ? r.late.filter(id => id !== studentId) : r.late
+                };
+              });
+            }
+          }
 
           showMessage("تم حذف تسجيل الغياب بنجاح!");
 
