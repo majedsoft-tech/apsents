@@ -233,24 +233,25 @@ const USERS_COLL = "registered_users";
 
 // --- ROBUST LOCAL CACHE & SYNC ENGINE ---
 function getLocalStorageKey(colName: string, uid?: string): string {
-  const currentUid = uid || getEffectiveUidAndEmail().uid;
-  return `school_offline_cache_${currentUid || "default"}_${colName}`;
+  return `school_offline_cache_${colName}`;
 }
 
 function getLocalItems(colName: string, uid?: string): any[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(getLocalStorageKey(colName, uid));
+    const raw = localStorage.getItem(`school_offline_cache_${colName}`);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
     }
     
-    // Fallback check for legacy un-scoped cache key
-    const legacyRaw = localStorage.getItem(`school_offline_cache_${colName}`);
-    if (legacyRaw) {
-      const parsedLegacy = JSON.parse(legacyRaw);
-      if (Array.isArray(parsedLegacy)) return parsedLegacy;
+    // Fallback check for legacy scoped cache key
+    if (uid) {
+      const legacyRaw = localStorage.getItem(`school_offline_cache_${uid}_${colName}`);
+      if (legacyRaw) {
+        const parsedLegacy = JSON.parse(legacyRaw);
+        if (Array.isArray(parsedLegacy)) return parsedLegacy;
+      }
     }
     return [];
   } catch (e) {
@@ -388,101 +389,10 @@ function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadca
 }
 
 // Helper to check if a document belongs to a specific user/school
-export function isDocBelongingToUser(data: any, currentUid: string, currentEmail: string): boolean {
+export function isDocBelongingToUser(data: any, currentUid?: string, currentEmail?: string): boolean {
   if (!data) return false;
-
-  // Documents without specific user isolation tags belong globally to the connected school database
-  if (!data.userId && !data.userEmail) {
-    return true;
-  }
-
-  const docUid = data.userId ? String(data.userId).trim().toLowerCase() : "";
-  const docEmail = data.userEmail ? String(data.userEmail).trim().toLowerCase() : "";
-  const cUid = currentUid ? String(currentUid).trim().toLowerCase() : "";
-  const cEmail = currentEmail ? String(currentEmail).trim().toLowerCase() : "";
-
-  // 1. Primary UID Match
-  if (docUid && cUid && docUid === cUid) {
-    return true;
-  }
-
-  // 2. Primary Email Match
-  if (docEmail && cEmail && docEmail === cEmail) {
-    return true;
-  }
-
-  // 3. Email/UID Cross Match (e.g., owner param was UID but doc has Email, or owner param was Email but doc has UID)
-  if (docEmail && cUid && (docEmail === cUid || docEmail.includes(cUid) || cUid.includes(docEmail))) {
-    return true;
-  }
-
-  if (docUid && cEmail && (docUid === cEmail || docUid.includes(cEmail) || cEmail.includes(docUid))) {
-    return true;
-  }
-
-  // 4. In-Memory Alias Cache Match (Resolves Google UID <-> Real Email)
-  if (cUid && userProfileAliasCache.has(cUid)) {
-    const alias = userProfileAliasCache.get(cUid)!;
-    if (docEmail && alias.email && docEmail === alias.email) return true;
-    if (docUid && alias.uid && docUid === alias.uid.toLowerCase()) return true;
-  }
-  if (cEmail && userProfileAliasCache.has(cEmail)) {
-    const alias = userProfileAliasCache.get(cEmail)!;
-    if (docEmail && alias.email && docEmail === alias.email) return true;
-    if (docUid && alias.uid && docUid === alias.uid.toLowerCase()) return true;
-  }
-  if (docUid && userProfileAliasCache.has(docUid)) {
-    const alias = userProfileAliasCache.get(docUid)!;
-    if (cEmail && alias.email && cEmail === alias.email) return true;
-    if (cUid && alias.uid && cUid === alias.uid.toLowerCase()) return true;
-  }
-  if (docEmail && userProfileAliasCache.has(docEmail)) {
-    const alias = userProfileAliasCache.get(docEmail)!;
-    if (cEmail && alias.email && cEmail === alias.email) return true;
-    if (cUid && alias.uid && cUid === alias.uid.toLowerCase()) return true;
-  }
-
-  // 5. Check URL parameters directly in case state is in transition
-  if (typeof window !== "undefined") {
-    const urlParams = new URLSearchParams(window.location.search);
-    let urlOwner = (urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid") || "").trim().toLowerCase();
-    let urlEmail = (urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail") || "").trim().toLowerCase();
-    let urlSchool = (urlParams.get("school") || urlParams.get("schoolName") || "").trim().toLowerCase();
-
-    if ((!urlOwner || !urlEmail || !urlSchool) && window.location.hash.includes("?")) {
-      const hashIdx = window.location.hash.indexOf("?");
-      const hashParams = new URLSearchParams(window.location.hash.substring(hashIdx));
-      if (!urlOwner) urlOwner = (hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid") || "").trim().toLowerCase();
-      if (!urlEmail) urlEmail = (hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail") || "").trim().toLowerCase();
-      if (!urlSchool) urlSchool = (hashParams.get("school") || hashParams.get("schoolName") || "").trim().toLowerCase();
-    }
-
-    if (urlOwner && (docUid === urlOwner || docEmail === urlOwner || docEmail.includes(urlOwner) || docUid.includes(urlOwner))) {
-      return true;
-    }
-    if (urlEmail && (docEmail === urlEmail || docUid === urlEmail || docEmail.includes(urlEmail) || docUid.includes(urlEmail))) {
-      return true;
-    }
-    if (urlSchool) {
-      if (data.schoolName && String(data.schoolName).trim().toLowerCase() === urlSchool) return true;
-      if (data.school && String(data.school).trim().toLowerCase() === urlSchool) return true;
-    }
-  }
-
-  // 6. If both the doc and current session are school/admin guest instances on this shared Firebase database, they share data seamlessly
-  const isCurrentGuest = !cEmail || cEmail.endsWith("@school.com") || cUid.startsWith("school_") || cUid === "school_default" || cUid === "school_main";
-  const isDocGuest = !docEmail || docEmail.endsWith("@school.com") || docUid.startsWith("school_") || docUid === "school_default" || docUid === "school_main";
-
-  if (isCurrentGuest || isDocGuest) {
-    return true;
-  }
-
-  // 7. If the document is part of this school database and not owned by an explicit different registered user
-  if (!docEmail.includes("@") || docEmail.endsWith("@school.com")) {
-    return true;
-  }
-
-  return false;
+  // All documents in this school database belong to the active school system and sync universally
+  return true;
 }
 
 /**
@@ -658,90 +568,27 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
   }
 }
 
-// Quota and network protection state
-let quotaExhaustedUntil = 0;
-let reenableTimer: any = null;
-
-// Initialize quota protection from localStorage if previously set
+// Clear any legacy quota backoff flags on boot so Firestore is ALWAYS connected
 if (typeof window !== "undefined") {
   try {
-    const savedBackoff = localStorage.getItem("firestore_quota_backoff_until");
-    if (savedBackoff) {
-      const parsed = parseInt(savedBackoff, 10);
-      if (parsed && parsed > Date.now()) {
-        quotaExhaustedUntil = parsed;
-        disableNetwork(db).catch(() => {});
-        const remaining = parsed - Date.now();
-        reenableTimer = setTimeout(() => {
-          quotaExhaustedUntil = 0;
-          try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
-          enableNetwork(db).catch(() => {});
-        }, remaining);
-      } else {
-        localStorage.removeItem("firestore_quota_backoff_until");
-      }
-    }
+    localStorage.removeItem("firestore_quota_backoff_until");
   } catch (_) {}
 }
 
 export function isQuotaExhausted(): boolean {
-  if (quotaExhaustedUntil > 0 && Date.now() < quotaExhaustedUntil) {
-    return true;
-  }
-  if (quotaExhaustedUntil > 0 && Date.now() >= quotaExhaustedUntil) {
-    quotaExhaustedUntil = 0;
-    if (typeof window !== "undefined") {
-      try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
-    }
-    enableNetwork(db).catch(() => {});
-  }
   return false;
 }
 
 export function handleFirestoreError(err: any) {
   if (!err) return;
-  const isQuota = err?.code === "resource-exhausted" || 
-    (typeof err?.message === "string" && (
-      err.message.toLowerCase().includes("quota") || 
-      err.message.toLowerCase().includes("resource-exhausted") ||
-      err.message.includes("Quota exceeded")
-    ));
-  if (isQuota) {
-    markQuotaExhausted();
+  // Non-blocking logger for diagnostic monitoring without disconnecting network
+  if (err?.code && err.code !== "permission-denied") {
+    console.debug("Firestore notification:", err?.message || err);
   }
 }
 
 export function markQuotaExhausted() {
-  // Back off from network calls for 5 minutes and rely completely on local cache & IndexedDB
-  const backoffDuration = 5 * 60 * 1000;
-  quotaExhaustedUntil = Date.now() + backoffDuration;
-  
-  if (typeof window !== "undefined") {
-    try {
-      localStorage.setItem("firestore_quota_backoff_until", String(quotaExhaustedUntil));
-      window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: true } }));
-    } catch (_) {}
-  }
-
-  // Gracefully disable network so Firestore stops logging backoff delay retries
-  disableNetwork(db).catch(() => {});
-
-  // Unsubscribe all active listeners to stop pending socket traffic
-  collectionHubs.forEach(hub => {
-    if (hub.unsub) {
-      try { hub.unsub(); } catch (_) {}
-      hub.unsub = null;
-    }
-  });
-
-  if (reenableTimer) clearTimeout(reenableTimer);
-  reenableTimer = setTimeout(() => {
-    quotaExhaustedUntil = 0;
-    if (typeof window !== "undefined") {
-      try { localStorage.removeItem("firestore_quota_backoff_until"); } catch (_) {}
-    }
-    enableNetwork(db).catch(() => {});
-  }, backoffDuration);
+  // No-op: Never disable network to guarantee 100% real-time synchronization across all devices
 }
 
 // Update Morning Delay Reason (for Admin and Supervisors)
@@ -943,9 +790,9 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   const uid = eff.uid;
   const email = eff.email;
   
-  // Deterministic clean ID per slot to prevent duplication and ensure 100% instant sync
+  // Deterministic canonical ID per slot to guarantee 100% unified sync across all devices
   const sanitizedPeriod = (record.period || "1").replace(/\s+/g, '_');
-  const recordId = `att_${uid}_${record.date}_${sanitizedPeriod}_${record.gradeId}_${record.classId}`;
+  const recordId = `att_${record.date}_${sanitizedPeriod}_${record.gradeId}_${record.classId}`;
 
   const fullRecord = {
     ...record,
@@ -1886,14 +1733,7 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
     callback(Array.isArray(localList) ? localList : []);
   } catch (_) {}
 
-  // 2. If quota is exhausted, do not attempt Firestore network connection
-  if (isQuotaExhausted()) {
-    return () => {
-      hub.callbacks.delete(callback);
-    };
-  }
-
-  // 3. Connect to Firestore singleton onSnapshot listener if not already connected
+  // 2. Connect to Firestore singleton onSnapshot listener if not already connected
   if (!hub.unsub) {
     try {
       const q = collection(db, colName);
@@ -1920,14 +1760,18 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         hub.callbacks.forEach(cb => {
           try { cb(results); } catch (_) {}
         });
-      }, (error: any) => {
-        if (error?.code === "resource-exhausted" || (typeof error?.message === "string" && error.message.toLowerCase().includes("quota"))) {
-          markQuotaExhausted();
-          if (hub.unsub) {
-            try { hub.unsub(); } catch (_) {}
-            hub.unsub = null;
-          }
+
+        // Broadcast to other tabs/windows in real time (0ms)
+        if (realTimeSyncChannel) {
+          try {
+            realTimeSyncChannel.postMessage({
+              colName,
+              items: results,
+              timestamp: Date.now()
+            });
+          } catch (_) {}
         }
+      }, (error: any) => {
         const activeEff = getEffectiveUidAndEmail();
         const fallbackRaw = getLocalItems(colName, activeEff.uid);
         const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, activeEff.uid, activeEff.email)) : [];
@@ -1940,9 +1784,7 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         }
       });
     } catch (err: any) {
-      if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
-        markQuotaExhausted();
-      }
+      console.warn("Firestore subscription notice:", err);
     }
   }
 
@@ -1955,7 +1797,7 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
           try { hub.unsub(); } catch (_) {}
           hub.unsub = null;
         }
-      }, 15000);
+      }, 30000);
     }
   };
 }

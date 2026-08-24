@@ -4,6 +4,7 @@ import {
   getClasses, 
   getTeachers, 
   getStudents, 
+  getLocalCollection,
   seedDatabaseIfEmpty,
   getSchoolName,
   saveSchoolName,
@@ -364,18 +365,22 @@ export default function App() {
       return;
     }
 
-    // Reset previous account data immediately to guarantee strict isolation
-    setGrades([]);
-    setClasses([]);
-    setTeachers([]);
-    setStudents([]);
+    // Pre-populate with local cached items for 0ms instant display while live sync connects
+    const localGrades = getLocalCollection<Grade>("grades");
+    const localClasses = getLocalCollection<Class>("classes");
+    const localTeachers = getLocalCollection<Teacher>("teachers");
+    const localStudents = getLocalCollection<Student>("students");
+    if (localGrades.length > 0) setGrades(localGrades);
+    if (localClasses.length > 0) setClasses(localClasses);
+    if (localTeachers.length > 0) setTeachers(localTeachers);
+    if (localStudents.length > 0) setStudents(localStudents);
+
     // Check cached school name for instantaneous presentation during loading
-    const cachedName = localStorage.getItem(`school_name_${currentUser.uid}`) || 
+    const cachedName = localStorage.getItem("school_name_cached") || 
+      (currentUser.uid ? localStorage.getItem(`school_name_${currentUser.uid}`) : null) || 
       (currentUser.email ? localStorage.getItem(`school_name_${currentUser.email.toLowerCase()}`) : null);
     if (cachedName) {
       setSchoolName(cachedName);
-    } else {
-      setSchoolName("");
     }
 
     setLoading(true);
