@@ -48,6 +48,7 @@ export interface BehaviorRecord {
   teacherName: string;
   violation: string;
   timestamp: any;
+  updatedAt?: any;
   userId?: string;
   userEmail?: string;
 }
@@ -67,6 +68,7 @@ export interface MorningDelayRecord {
   recordedBy: string; // اسم المناوب / المشرف
   notes?: string;
   timestamp: any;
+  updatedAt?: any;
   userId?: string;
   userEmail?: string;
 }

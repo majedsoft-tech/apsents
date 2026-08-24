@@ -784,7 +784,7 @@ export function subscribeToAttendanceRecord(
   }, onError);
 }
 
-// Save Attendance Record (Ultra-fast instant write with local-first cache + background sync)
+// Save Attendance Record (Instant local-first cache + real-time Firestore sync)
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -799,40 +799,37 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     id: recordId,
     userId: uid,
     userEmail: email,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    updatedAt: Date.now()
   };
 
   // 1. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
-  // 2. Persist to Firestore asynchronously in background without blocking the UI
-  const docRef = doc(db, ATTENDANCE_COLL, recordId);
-  setDoc(docRef, {
-    ...record,
-    id: recordId,
-    userId: uid,
-    userEmail: email,
-    timestamp: Date.now(),
-    updatedAt: Date.now()
-  }, { merge: true }).catch((err: any) => {
+  // 2. Persist to Firestore
+  try {
+    const docRef = doc(db, ATTENDANCE_COLL, recordId);
+    await setDoc(docRef, fullRecord, { merge: true });
+  } catch (err: any) {
     handleFirestoreError(err);
-  });
+  }
 }
 
-// Delete entire Attendance Record (Ultra-fast instant local update + background sync)
+// Delete entire Attendance Record (Instant local update + real-time Firestore delete)
 export async function deleteAttendanceRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(ATTENDANCE_COLL, id, eff.uid);
   try {
-    deleteDoc(doc(db, ATTENDANCE_COLL, id)).catch(() => {});
-  } catch (err) {}
+    await deleteDoc(doc(db, ATTENDANCE_COLL, id));
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
-// Delete single student absence/late entry from an Attendance Record (Instant 0ms update + background sync)
+// Delete single student absence/late entry from an Attendance Record (Instant 0ms update + Firestore sync)
 export async function deleteAttendanceEntry(recordId: string, studentId: string, isAbsentType: boolean): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
-  const email = eff.email;
 
   if (studentId === "no-absence") {
     return deleteAttendanceRecord(recordId);
@@ -877,27 +874,15 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
     notifyCollectionSubscribers(ATTENDANCE_COLL, items);
   }
 
-  // 2. Persist to Firestore in background asynchronously
+  // 2. Persist to Firestore
   try {
     const docRef = doc(db, ATTENDANCE_COLL, recordId);
     if (updatedRecord) {
-      setDoc(docRef, {
-        absent: updatedRecord.absent,
-        late: updatedRecord.late,
-        present: updatedRecord.present,
-        isNoAbsence: updatedRecord.isNoAbsence,
-        updatedAt: Date.now()
-      }, { merge: true }).catch(() => {});
-    } else {
-      const { arrayRemove, arrayUnion, updateDoc } = await import("firebase/firestore");
-      const field = isAbsentType ? "absent" : "late";
-      updateDoc(docRef, {
-        [field]: arrayRemove(studentId),
-        present: arrayUnion(studentId),
-        updatedAt: Date.now()
-      }).catch(() => {});
+      await setDoc(docRef, updatedRecord, { merge: true });
     }
-  } catch (err) {}
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // Fetch Behavior Records for a student
@@ -922,7 +907,7 @@ export function subscribeToBehaviorRecords(
   }, onError);
 }
 
-// Save Behavior Record (Ultra-fast instant write with local-first cache + background sync)
+// Save Behavior Record (Instant local-first cache + real-time Firestore sync)
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -934,35 +919,33 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
     id: newId,
     userId: uid,
     userEmail: email,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    updatedAt: Date.now()
   };
 
   // 1. Instant local update (0ms)
   saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord, uid);
 
-  // 2. Background Firestore write
-  const docRef = doc(db, BEHAVIORS_COLL, newId);
-  setDoc(docRef, {
-    ...record,
-    id: newId,
-    userId: uid,
-    userEmail: email,
-    timestamp: Date.now(),
-    updatedAt: Date.now()
-  }, { merge: true }).catch((err) => {
-    if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
-      markQuotaExhausted();
-    }
-  });
+  // 2. Firestore write
+  try {
+    const docRef = doc(db, BEHAVIORS_COLL, newId);
+    await setDoc(docRef, fullRecord, { merge: true });
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 
   return newId;
 }
 
-// Delete Behavior Record (Instant local purge + non-blocking background delete)
+// Delete Behavior Record (Instant local purge + real-time Firestore delete)
 export async function deleteBehaviorRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(BEHAVIORS_COLL, id, eff.uid);
-  deleteDoc(doc(db, BEHAVIORS_COLL, id)).catch(() => {});
+  try {
+    await deleteDoc(doc(db, BEHAVIORS_COLL, id));
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // --- MORNING DELAY (التأخر الصباحي) ---
@@ -997,7 +980,7 @@ export function subscribeToMorningDelayRecords(
   }, onError);
 }
 
-// Save Morning Delay Record (Ultra-fast instant write with local-first optimistic cache)
+// Save Morning Delay Record (Instant local-first optimistic cache + real-time Firestore sync)
 export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -1013,24 +996,20 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
     id: recordId,
     userId: uid,
     userEmail: email,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    updatedAt: Date.now()
   };
 
   // 1. Instant local cache update (0ms)
   saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord);
 
-  // 2. Background Firestore write
-  const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
-  setDoc(docRef, {
-    ...record,
-    id: recordId,
-    userId: uid,
-    userEmail: email,
-    timestamp: Date.now(),
-    updatedAt: Date.now()
-  }, { merge: true }).catch((err) => {
+  // 2. Real-time Firestore write
+  try {
+    const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
+    await setDoc(docRef, fullRecord, { merge: true });
+  } catch (err: any) {
     handleFirestoreError(err);
-  });
+  }
 
   return recordId;
 }
@@ -1064,14 +1043,20 @@ export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "
       });
     }
     await batch.commit();
-  } catch (err) {}
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
-// Delete Morning Delay Record (Instant local purge + non-blocking background delete)
+// Delete Morning Delay Record (Instant local purge + real-time Firestore delete)
 export async function deleteMorningDelayRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(MORNING_DELAYS_COLL, id, eff.uid);
-  deleteDoc(doc(db, MORNING_DELAYS_COLL, id)).catch(() => {});
+  try {
+    await deleteDoc(doc(db, MORNING_DELAYS_COLL, id));
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // Fetch all morning delay records for stats/reports
@@ -1116,13 +1101,11 @@ export async function addGrade(name: string): Promise<string> {
   saveOrUpdateLocalItem(GRADES_COLL, newGradeObj);
 
   // 2. Persist to Firestore with explicit document ID
-  setDoc(doc(db, GRADES_COLL, generatedId), { 
-    id: generatedId,
-    name: trimmedName,
-    userId: uid,
-    userEmail: email,
-    createdAt: Date.now()
-  }).catch(() => {});
+  try {
+    await setDoc(doc(db, GRADES_COLL, generatedId), newGradeObj);
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 
   return generatedId;
 }
@@ -1183,13 +1166,15 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
         });
         await batch.commit();
       }
-    } catch (err: any) {}
+    } catch (err: any) {
+      handleFirestoreError(err);
+    }
   }
 
   return results;
 }
 
-// Delete Grade (Instant 0ms local purge + non-blocking background cascade)
+// Delete Grade (Instant 0ms local purge + real-time Firestore cascade delete)
 export async function deleteGrade(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -1206,19 +1191,19 @@ export async function deleteGrade(id: string): Promise<void> {
   removeLocalItemsBy(CLASSES_COLL, (c) => c.gradeId === id, uid);
   removeLocalItemsBy(STUDENTS_COLL, (s) => s.gradeId === id || classIdsToDelete.includes(s.classId), uid);
 
-  // 3. Delete from Firestore asynchronously in background without blocking the UI
-  (async () => {
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, GRADES_COLL, id));
-      classIdsToDelete.forEach(cId => batch.delete(doc(db, CLASSES_COLL, cId)));
-      studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
-      await batch.commit().catch(() => {});
-    } catch (err: any) {}
-  })();
+  // 3. Delete from Firestore in real time
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, GRADES_COLL, id));
+    classIdsToDelete.forEach(cId => batch.delete(doc(db, CLASSES_COLL, cId)));
+    studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
+    await batch.commit();
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
-// Add Class (Instant optimistic return + background persistence)
+// Add Class (Instant optimistic return + real-time Firestore persistence)
 export async function addClass(name: string, gradeId: string): Promise<string> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -1243,15 +1228,12 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
 
   saveOrUpdateLocalItem(CLASSES_COLL, newClassObj);
 
-  // Firestore background write with deterministic document ID
-  setDoc(doc(db, CLASSES_COLL, generatedId), { 
-    id: generatedId,
-    name: trimmedName, 
-    gradeId, 
-    userId: uid,
-    userEmail: email,
-    createdAt: Date.now()
-  }).catch(() => {});
+  // Firestore write with deterministic document ID
+  try {
+    await setDoc(doc(db, CLASSES_COLL, generatedId), newClassObj);
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 
   return generatedId;
 }
@@ -1317,13 +1299,15 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
         });
         await batch.commit();
       }
-    } catch (err: any) {}
+    } catch (err: any) {
+      handleFirestoreError(err);
+    }
   }
 
   return results;
 }
 
-// Delete Class (Instant 0ms local purge + non-blocking background cascade)
+// Delete Class (Instant 0ms local purge + real-time Firestore cascade delete)
 export async function deleteClass(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
@@ -1337,14 +1321,14 @@ export async function deleteClass(id: string): Promise<void> {
   removeLocalItemsBy(STUDENTS_COLL, (s) => s.classId === id, uid);
 
   // 3. Asynchronous Firestore batch delete
-  (async () => {
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, CLASSES_COLL, id));
-      studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
-      await batch.commit().catch(() => {});
-    } catch (err: any) {}
-  })();
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, CLASSES_COLL, id));
+    studentIdsToDelete.forEach(sId => batch.delete(doc(db, STUDENTS_COLL, sId)));
+    await batch.commit();
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // Add Teacher
@@ -1364,13 +1348,11 @@ export async function addTeacher(name: string): Promise<string> {
 
   saveOrUpdateLocalItem(TEACHERS_COLL, newTeacherObj);
 
-  setDoc(doc(db, TEACHERS_COLL, generatedId), { 
-    id: generatedId,
-    name: name.trim(), 
-    userId: uid,
-    userEmail: email,
-    createdAt: Date.now()
-  }).catch(() => {});
+  try {
+    await setDoc(doc(db, TEACHERS_COLL, generatedId), newTeacherObj);
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 
   return generatedId;
 }
@@ -1414,32 +1396,38 @@ export async function addTeachersBatch(names: string[]): Promise<Teacher[]> {
         });
         await batch.commit();
       }
-    } catch (err: any) {}
+    } catch (err: any) {
+      handleFirestoreError(err);
+    }
   }
 
   return toCreate;
 }
 
-// Delete Teacher (Instant 0ms local purge + non-blocking background delete)
+// Delete Teacher (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteTeacher(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(TEACHERS_COLL, id, eff.uid);
-  deleteDoc(doc(db, TEACHERS_COLL, id)).catch(() => {});
+  try {
+    await deleteDoc(doc(db, TEACHERS_COLL, id));
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
-// Delete Multiple Teachers in a Batch (Instant 0ms local purge + non-blocking background delete)
+// Delete Multiple Teachers in a Batch (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteTeachersBatch(ids: string[]): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   ids.forEach(id => removeLocalItem(TEACHERS_COLL, id, eff.uid));
-  (async () => {
-    try {
-      const batch = writeBatch(db);
-      ids.forEach(id => {
-        batch.delete(doc(db, TEACHERS_COLL, id));
-      });
-      await batch.commit().catch(() => {});
-    } catch (err: any) {}
-  })();
+  try {
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      batch.delete(doc(db, TEACHERS_COLL, id));
+    });
+    await batch.commit();
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // Add Student (Deduplicates automatically by classId and normalized student name)
@@ -1490,15 +1478,11 @@ export async function addStudent(name: string, gradeId: string, classId: string)
 
   saveOrUpdateLocalItem(STUDENTS_COLL, newStudentObj);
 
-  setDoc(doc(db, STUDENTS_COLL, generatedId), { 
-    id: generatedId,
-    name: trimmedName, 
-    gradeId, 
-    classId, 
-    userId: uid,
-    userEmail: email,
-    createdAt: Date.now()
-  }).catch(() => {});
+  try {
+    await setDoc(doc(db, STUDENTS_COLL, generatedId), newStudentObj);
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 
   return generatedId;
 }
@@ -1579,32 +1563,38 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
         });
         await batch.commit();
       }
-    } catch (err: any) {}
+    } catch (err: any) {
+      handleFirestoreError(err);
+    }
   }
 
   return toCreate;
 }
 
-// Delete Student (Instant 0ms local purge + non-blocking background delete)
+// Delete Student (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteStudent(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItem(STUDENTS_COLL, id, eff.uid);
-  deleteDoc(doc(db, STUDENTS_COLL, id)).catch(() => {});
+  try {
+    await deleteDoc(doc(db, STUDENTS_COLL, id));
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
-// Delete Multiple Students in a Batch (Instant 0ms local purge + non-blocking background delete)
+// Delete Multiple Students in a Batch (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteStudentsBatch(ids: string[]): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   ids.forEach(id => removeLocalItem(STUDENTS_COLL, id, eff.uid));
-  (async () => {
-    try {
-      const batch = writeBatch(db);
-      ids.forEach(id => {
-        batch.delete(doc(db, STUDENTS_COLL, id));
-      });
-      await batch.commit().catch(() => {});
-    } catch (err: any) {}
-  })();
+  try {
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+      batch.delete(doc(db, STUDENTS_COLL, id));
+    });
+    await batch.commit();
+  } catch (err: any) {
+    handleFirestoreError(err);
+  }
 }
 
 // Fetch all attendance for statistics
