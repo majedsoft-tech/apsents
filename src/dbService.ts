@@ -905,11 +905,18 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
     const existing = items[idx];
     let updatedAbsent: string[] = Array.isArray(existing.absent) ? [...existing.absent] : [];
     let updatedLate: string[] = Array.isArray(existing.late) ? [...existing.late] : [];
+    let updatedPresent: string[] = Array.isArray(existing.present) ? [...existing.present] : [];
 
     if (isAbsentType) {
       updatedAbsent = updatedAbsent.filter((id: string) => id !== studentId);
+      if (!updatedPresent.includes(studentId)) {
+        updatedPresent.push(studentId);
+      }
     } else {
       updatedLate = updatedLate.filter((id: string) => id !== studentId);
+      if (!updatedPresent.includes(studentId)) {
+        updatedPresent.push(studentId);
+      }
     }
 
     const isNoAbsence = updatedAbsent.length === 0 && updatedLate.length === 0;
@@ -918,6 +925,7 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
       ...existing,
       absent: updatedAbsent,
       late: updatedLate,
+      present: updatedPresent,
       isNoAbsence,
       updatedAt: Date.now()
     };
@@ -934,14 +942,16 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
       setDoc(docRef, {
         absent: updatedRecord.absent,
         late: updatedRecord.late,
+        present: updatedRecord.present,
         isNoAbsence: updatedRecord.isNoAbsence,
         updatedAt: Date.now()
       }, { merge: true }).catch(() => {});
     } else {
-      const { arrayRemove, updateDoc } = await import("firebase/firestore");
+      const { arrayRemove, arrayUnion, updateDoc } = await import("firebase/firestore");
       const field = isAbsentType ? "absent" : "late";
       updateDoc(docRef, {
         [field]: arrayRemove(studentId),
+        present: arrayUnion(studentId),
         updatedAt: Date.now()
       }).catch(() => {});
     }
