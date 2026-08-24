@@ -21,6 +21,8 @@ import {
   deleteBehaviorRecord,
   getAllMorningDelayRecords,
   deleteMorningDelayRecord,
+  updateMorningDelayReason,
+  updateAttendanceAbsenceExcuse,
   addStudentsBatch,
   addTeachersBatch,
   subscribeToAllAttendanceRecords,
@@ -753,6 +755,18 @@ export default function AdminPanel({
         }
       }
     );
+  };
+
+  // Change or toggle Morning Delay Excuse Status (بعذر / بدون عذر)
+  const handleChangeDelayReason = async (delayId: string, newReason: string) => {
+    try {
+      setMorningDelaysList(prev => prev.map(d => d.id === delayId ? { ...d, reason: newReason } : d));
+      await updateMorningDelayReason(delayId, newReason);
+      showMessage(`تم تحديث حالة العذر إلى (${newReason}) بنجاح ✓`);
+    } catch (e) {
+      console.error("Error updating delay reason:", e);
+      showMessage("حدث خطأ أثناء تعديل حالة العذر", "error");
+    }
   };
 
   // Set default selected grade for customizer
@@ -2546,13 +2560,13 @@ export default function AdminPanel({
                         <table className="w-full text-right text-xs" dir="rtl">
                           <thead className="bg-slate-50 text-slate-500 font-extrabold text-[10px] border-b border-slate-100">
                             <tr>
-                              <th className="py-1.5 px-1 text-center w-7">#</th>
-                              <th className="py-1.5 px-1.5 text-right font-black">وقت التسجيل</th>
-                              <th className="py-1.5 px-2 text-right font-black">اسم الطالب</th>
-                              <th className="py-1.5 px-1 text-center font-black">الحصة</th>
-                              <th className="py-1.5 px-1 text-center font-black">الفصل</th>
-                              <th className="py-1.5 px-1.5 text-right font-black">المعلم المعتمد</th>
-                              {!isReadOnly && <th className="py-1.5 px-1 text-center">⚙️</th>}
+                              <th className="py-1 px-1 text-center w-6">#</th>
+                              <th className="py-1 px-1 text-right font-black">الوقت</th>
+                              <th className="py-1 px-1.5 text-right font-black">اسم الطالب</th>
+                              <th className="py-1 px-0.5 text-center font-black">الحصة</th>
+                              <th className="py-1 px-0.5 text-center font-black">الفصل</th>
+                              <th className="py-1 px-1 text-right font-black">المعلم المعتمد</th>
+                              {!isReadOnly && <th className="py-1 px-0.5 text-center">⚙️</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -2574,54 +2588,54 @@ export default function AdminPanel({
                                         : "hover:bg-slate-50/70"
                                   }`}
                                 >
-                                  <td className="py-1.5 px-1 text-center font-bold text-slate-400">
-                                    <div className="w-4.5 h-4.5 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto text-[9.5px] font-black">
+                                  <td className="py-1 px-1 text-center font-bold text-slate-400">
+                                    <div className="w-4 h-4 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto text-[9px] font-black">
                                       {index + 1}
                                     </div>
                                   </td>
-                                  <td className="py-1.5 px-1.5 font-medium text-slate-500 text-[10px] whitespace-nowrap">{entry.time}</td>
-                                  <td className="py-1.5 px-2">
-                                    <div className="flex items-center gap-1.5">
+                                  <td className="py-1 px-1 font-medium text-slate-500 text-[9.5px] whitespace-nowrap">{entry.time}</td>
+                                  <td className="py-1 px-1.5">
+                                    <div className="flex items-center gap-1">
                                       {entry.isNoAbsenceDummy ? (
                                         <span 
-                                          className="bg-emerald-600 text-white font-black text-[10.5px] px-2 py-0.5 rounded-md inline-block text-center shadow-3xs whitespace-nowrap"
+                                          className="bg-emerald-600 text-white font-extrabold text-[9.5px] px-1.5 py-0.5 rounded inline-block text-center shadow-3xs whitespace-nowrap"
                                           title={entry.studentName}
                                         >
                                           {entry.studentName}
                                         </span>
                                       ) : entry.isLate ? (
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9.5px] font-black px-1.5 py-0.2 rounded shrink-0">
+                                        <div className="flex items-center gap-1">
+                                          <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[8.5px] font-black px-1 py-0.2 rounded shrink-0">
                                             متأخر
                                           </span>
-                                          <span className="font-extrabold text-slate-900 text-[11px] whitespace-nowrap block" title={entry.studentName}>
+                                          <span className="font-bold text-slate-900 text-[10px] whitespace-nowrap block" title={entry.studentName}>
                                             {entry.studentName}
                                           </span>
                                         </div>
                                       ) : (
-                                        <span className="font-extrabold text-slate-900 text-[11px] whitespace-nowrap block" title={entry.studentName}>
+                                        <span className="font-bold text-slate-900 text-[10px] whitespace-nowrap block" title={entry.studentName}>
                                           {entry.studentName}
                                         </span>
                                       )}
                                     </div>
                                   </td>
-                                  <td className="py-1.5 px-1 text-center">
-                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
+                                  <td className="py-1 px-0.5 text-center">
+                                    <span className={`font-extrabold text-[9.5px] w-4.5 h-4.5 rounded flex items-center justify-center border shadow-3xs mx-auto ${getPeriodBadgeStyles(getPeriodNum(entry.periodCode))}`} title="الحصة">
                                       {getPeriodNum(entry.periodCode)}
                                     </span>
                                   </td>
-                                  <td className="py-1.5 px-1 text-center">
-                                    <span className={`font-extrabold text-[10px] w-5 h-5 rounded-md flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
+                                  <td className="py-1 px-0.5 text-center">
+                                    <span className={`font-extrabold text-[9.5px] w-4.5 h-4.5 rounded flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الصف">
                                       {getClassNum(entry.classCode)}
                                     </span>
                                   </td>
-                                  <td className="py-1.5 px-1.5 text-slate-600 font-bold text-[10.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
+                                  <td className="py-1 px-1 text-slate-600 font-medium text-[9.5px] whitespace-nowrap" title={entry.teacherName}>{entry.teacherName}</td>
                                   {!isReadOnly && (
-                                    <td className="py-1.5 px-1 text-center">
+                                    <td className="py-1 px-0.5 text-center">
                                       <button
                                         type="button"
                                         onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
-                                        className="text-slate-400 hover:text-rose-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded hover:bg-slate-100 transition cursor-pointer"
                                         title="حذف هذا التسجيل"
                                       >
                                         <Trash2 className="w-3 h-3" />
@@ -2927,13 +2941,60 @@ export default function AdminPanel({
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${
-                                  entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
-                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                    : "bg-amber-50 text-amber-700 border-amber-200"
-                                }`}>
-                                  {entry.reason || "بدون عذر"}
-                                </span>
+                                {!isReadOnly ? (
+                                  (() => {
+                                    const isCurrentlyExcused = Boolean(entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون"));
+                                    return (
+                                      <div className={`inline-flex items-center justify-center gap-1.5 p-1 rounded-lg border transition-all ${
+                                        isCurrentlyExcused ? "bg-emerald-50/50 border-emerald-200" : "bg-slate-50 border-slate-200"
+                                      }`}>
+                                        {/* Quick Status Toggle Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextReason = isCurrentlyExcused ? "بدون عذر" : "بعذر";
+                                            handleChangeDelayReason(entry.id, nextReason);
+                                          }}
+                                          className={`px-2.5 py-1 rounded-md text-[11px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-3xs active:scale-95 ${
+                                            isCurrentlyExcused
+                                              ? "bg-emerald-600 hover:bg-emerald-700 text-white ring-1 ring-emerald-400"
+                                              : "bg-amber-500 hover:bg-amber-600 text-white ring-1 ring-amber-400"
+                                          }`}
+                                          title={isCurrentlyExcused ? "الحالة الحالية: بعذر (انقر للتحويل إلى بدون عذر وتعطيل القائمة)" : "الحالة الحالية: بدون عذر (انقر للتحويل إلى بعذر وتفعيل القائمة)"}
+                                        >
+                                          <span>{isCurrentlyExcused ? "✓ بعذر" : "✕ بدون عذر"}</span>
+                                        </button>
+
+                                        {/* Quick Selection Dropdown - enabled only when excused */}
+                                        <select
+                                          value={isCurrentlyExcused ? (entry.reason || "بعذر") : "بدون عذر"}
+                                          disabled={!isCurrentlyExcused}
+                                          onChange={(e) => handleChangeDelayReason(entry.id, e.target.value)}
+                                          className={`text-[10px] font-extrabold rounded px-1.5 py-0.5 outline-none transition-all ${
+                                            isCurrentlyExcused
+                                              ? "bg-white text-emerald-900 border border-emerald-300 cursor-pointer hover:border-emerald-500 shadow-3xs"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60"
+                                          }`}
+                                          title={isCurrentlyExcused ? "اختيار نوع العذر" : "القائمة معطلة لأن الحالة (بدون عذر) - اضغط على الزر لتفعيلها"}
+                                        >
+                                          <option value="بعذر">بعذر (عام)</option>
+                                          <option value="عذر طبي">عذر طبي</option>
+                                          <option value="ظروف أسرية">ظروف أسرية</option>
+                                          <option value="أزمة مواصلات">أزمة مواصلات</option>
+                                          <option value="استيقاظ متأخر">استيقاظ متأخر</option>
+                                        </select>
+                                      </div>
+                                    );
+                                  })()
+                                ) : (
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${
+                                    entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                  }`}>
+                                    {entry.reason || "بدون عذر"}
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2.5 px-3 text-center font-bold text-slate-600 whitespace-nowrap">
                                 {entry.recordedBy || "-"}
@@ -2994,17 +3055,59 @@ export default function AdminPanel({
                           </div>
 
                           <div className="mt-2.5 pt-2 border-t border-amber-200/50 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="bg-amber-100 text-amber-900 font-black text-[10px] px-2 py-0.5 rounded-md border border-amber-300 dir-ltr">
                                 ⏰ {entry.arrivalTime || "-"}
                               </span>
-                              <span className={`px-2 py-0.5 rounded-md text-[10px] font-black border ${
-                                entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-amber-100/80 text-amber-800 border-amber-300"
-                              }`}>
-                                {entry.reason || "بدون عذر"}
-                              </span>
+                              {!isReadOnly ? (
+                                (() => {
+                                  const isCurrentlyExcused = Boolean(entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون"));
+                                  return (
+                                    <div className={`inline-flex items-center gap-1 p-0.5 rounded-md border transition-all ${
+                                      isCurrentlyExcused ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200"
+                                    }`}>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const nextReason = isCurrentlyExcused ? "بدون عذر" : "بعذر";
+                                          handleChangeDelayReason(entry.id, nextReason);
+                                        }}
+                                        className={`px-2 py-0.5 rounded text-[10px] font-black transition-all cursor-pointer ${
+                                          isCurrentlyExcused
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-amber-500 text-white"
+                                        }`}
+                                      >
+                                        {isCurrentlyExcused ? "✓ بعذر" : "✕ بدون عذر"}
+                                      </button>
+                                      <select
+                                        value={isCurrentlyExcused ? (entry.reason || "بعذر") : "بدون عذر"}
+                                        disabled={!isCurrentlyExcused}
+                                        onChange={(e) => handleChangeDelayReason(entry.id, e.target.value)}
+                                        className={`text-[9.5px] font-bold border-none outline-none ${
+                                          isCurrentlyExcused
+                                            ? "bg-transparent text-emerald-950 cursor-pointer"
+                                            : "bg-transparent text-slate-400 cursor-not-allowed opacity-50"
+                                        }`}
+                                      >
+                                        <option value="بعذر">بعذر (عام)</option>
+                                        <option value="عذر طبي">عذر طبي</option>
+                                        <option value="ظروف أسرية">ظروف أسرية</option>
+                                        <option value="أزمة مواصلات">أزمة مواصلات</option>
+                                        <option value="استيقاظ متأخر">استيقاظ متأخر</option>
+                                      </select>
+                                    </div>
+                                  );
+                                })()
+                              ) : (
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-black border ${
+                                  entry.reason && entry.reason.includes("عذر") && !entry.reason.includes("بدون")
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-amber-100/80 text-amber-800 border-amber-300"
+                                }`}>
+                                  {entry.reason || "بدون عذر"}
+                                </span>
+                              )}
                             </div>
 
                             <span className="text-[10px] text-slate-500 font-bold">
@@ -3082,14 +3185,14 @@ export default function AdminPanel({
 
               <div className="border border-slate-100 rounded-xl overflow-hidden mt-4">
                 <table className="w-full text-right text-xs" dir="rtl">
-                  <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
+                  <thead className="bg-slate-50 text-slate-500 font-extrabold text-[10.5px] border-b border-slate-100">
                     <tr>
-                      <th className="py-2.5 px-4 text-right">رقم</th>
-                      <th className="py-2.5 px-4 text-right">اسم الطالب</th>
-                      <th className="py-2.5 px-4 text-right">الحالة</th>
-                      <th className="py-2.5 px-4 text-right">الحصة</th>
-                      <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
-                      {!isReadOnly && <th className="py-2.5 px-4 text-center">الاجراءات</th>}
+                      <th className="py-2 px-3 text-right">رقم</th>
+                      <th className="py-2 px-3 text-right">اسم الطالب</th>
+                      <th className="py-2 px-2 text-right">الحالة</th>
+                      <th className="py-2 px-2 text-right">الحصة</th>
+                      <th className="py-2 px-3 text-right">المعلم المعتمد</th>
+                      {!isReadOnly && <th className="py-2 px-3 text-center">الاجراءات</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -3102,23 +3205,23 @@ export default function AdminPanel({
                     ) : (
                       searchAttendanceResult.map((entry, index) => (
                         <tr key={entry.id} className="hover:bg-slate-50/50 transition">
-                          <td className="py-3 px-4 font-bold text-slate-400">{index + 1}</td>
-                          <td className="py-3 px-4 font-extrabold text-slate-800">{entry.studentName}</td>
-                          <td className="py-3 px-4">
+                          <td className="py-2 px-3 font-bold text-slate-400 text-xs">{index + 1}</td>
+                          <td className="py-2 px-3 font-bold text-slate-800 text-[11px]">{entry.studentName}</td>
+                          <td className="py-2 px-2">
                             <span className={`px-2 py-0.5 rounded-full text-3xs font-black ${
                               entry.status === "غائب" ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-amber-50 text-amber-600 border border-amber-100"
                             }`}>
                               {entry.status}
                             </span>
                           </td>
-                          <td className="py-3 px-4 font-black text-slate-700">{entry.period}</td>
-                          <td className="py-3 px-4 text-slate-500 font-bold">{entry.teacherName}</td>
+                          <td className="py-2 px-2 font-black text-slate-700 text-xs">{entry.period}</td>
+                          <td className="py-2 px-3 text-slate-500 font-medium text-[10px]">{entry.teacherName}</td>
                           {!isReadOnly && (
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-2 px-3 text-center">
                               <button
                                 type="button"
                                 onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
-                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                                className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-100 transition cursor-pointer"
                                 title="حذف هذا تسجيل الغياب"
                               >
                                 <Trash2 className="w-3.5 h-3.5 mx-auto" />

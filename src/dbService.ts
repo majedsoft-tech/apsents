@@ -620,17 +620,10 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
 let quotaExhaustedUntil = 0;
 if (typeof window !== "undefined") {
   try {
-    const storedUntil = localStorage.getItem("firebase_quota_exhausted_until");
-    if (storedUntil) {
-      const parsed = parseInt(storedUntil, 10);
-      if (!isNaN(parsed) && parsed > Date.now()) {
-        quotaExhaustedUntil = parsed;
-      }
-    }
+    // Clear legacy permanent lockout
+    localStorage.removeItem("firebase_quota_exhausted_until");
   } catch (_) {}
 }
-
-let isNetworkDisabled = false;
 
 export function isQuotaExhausted(): boolean {
   if (quotaExhaustedUntil > 0 && Date.now() < quotaExhaustedUntil) {
@@ -639,42 +632,84 @@ export function isQuotaExhausted(): boolean {
   return false;
 }
 
+export function handleFirestoreError(err: any) {
+  if (!err) return;
+  if (err?.code === "resource-exhausted" || (typeof err?.message === "string" && err.message.toLowerCase().includes("quota"))) {
+    markQuotaExhausted();
+  }
+}
+
 export function markQuotaExhausted() {
-  // Back off from triggering network queries for 15 minutes to avoid overloading or logging loops
-  quotaExhaustedUntil = Date.now() + 15 * 60 * 1000;
+  // Graceful short backoff (15 seconds) for read queries only
+  quotaExhaustedUntil = Date.now() + 15 * 1000;
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem("firebase_quota_exhausted_until", String(quotaExhaustedUntil));
       window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: true } }));
     } catch (_) {}
   }
+}
 
-  // Teardown all active hub listeners immediately
-  collectionHubs.forEach(hub => {
-    if (hub.unsub) {
-      try { hub.unsub(); } catch (_) {}
-      hub.unsub = null;
+// Update Morning Delay Reason (for Admin and Supervisors)
+export async function updateMorningDelayReason(id: string, newReason: string): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+
+  // 1. Update local cache immediately
+  const items = getLocalItems(MORNING_DELAYS_COLL, uid);
+  const idx = items.findIndex(r => r && r.id === id);
+  if (idx >= 0) {
+    items[idx] = { ...items[idx], reason: newReason, updatedAt: Date.now() };
+    setLocalItems(MORNING_DELAYS_COLL, items, uid);
+    notifyCollectionSubscribers(MORNING_DELAYS_COLL, items);
+  }
+
+  // 2. Persist to Firestore
+  try {
+    const docRef = doc(db, MORNING_DELAYS_COLL, id);
+    await setDoc(docRef, { reason: newReason, updatedAt: Date.now() }, { merge: true });
+  } catch (err) {
+    console.warn("Firestore update morning delay reason notice:", err);
+  }
+}
+
+// Update Attendance Record student absence excuse
+export async function updateAttendanceAbsenceExcuse(recordId: string, studentId: string, isExcused: boolean, reason?: string): Promise<void> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+
+  const items = getLocalItems(ATTENDANCE_COLL, uid);
+  const idx = items.findIndex(r => r && r.id === recordId);
+  if (idx >= 0) {
+    const existing = items[idx];
+    const excusedList = Array.isArray(existing.excused) ? [...existing.excused] : [];
+    const excuseReasons = { ...(existing.excuseReasons || {}) };
+
+    if (isExcused) {
+      if (!excusedList.includes(studentId)) excusedList.push(studentId);
+      if (reason) excuseReasons[studentId] = reason;
+      else if (!excuseReasons[studentId]) excuseReasons[studentId] = "بعذر";
+    } else {
+      const eIdx = excusedList.indexOf(studentId);
+      if (eIdx >= 0) excusedList.splice(eIdx, 1);
+      delete excuseReasons[studentId];
     }
-  });
 
-  if (!isNetworkDisabled) {
-    isNetworkDisabled = true;
+    const updated = {
+      ...existing,
+      excused: excusedList,
+      excuseReasons,
+      updatedAt: Date.now()
+    };
+    items[idx] = updated;
+    setLocalItems(ATTENDANCE_COLL, items, uid);
+    notifyCollectionSubscribers(ATTENDANCE_COLL, items);
+
     try {
-      disableNetwork(db).catch(() => {});
-    } catch (_) {}
-    // Automatically re-enable network in background after backoff period
-    setTimeout(() => {
-      if (Date.now() >= quotaExhaustedUntil) {
-        isNetworkDisabled = false;
-        try {
-          if (typeof window !== "undefined") {
-            localStorage.removeItem("firebase_quota_exhausted_until");
-            window.dispatchEvent(new CustomEvent("firebase-quota-status", { detail: { exhausted: false } }));
-          }
-          enableNetwork(db).catch(() => {});
-        } catch (_) {}
-      }
-    }, 15 * 60 * 1000);
+      const docRef = doc(db, ATTENDANCE_COLL, recordId);
+      await setDoc(docRef, { excused: excusedList, excuseReasons, updatedAt: Date.now() }, { merge: true });
+    } catch (err) {
+      console.warn("Firestore update attendance excuse notice:", err);
+    }
   }
 }
 
@@ -1750,18 +1785,21 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
     try {
       const q = collection(db, colName);
       hub.unsub = onSnapshot(q, (snapshot) => {
+        const activeEff = getEffectiveUidAndEmail();
+        const activeUid = activeEff.uid;
+        const activeEmail = activeEff.email;
         const results: any[] = [];
         const seenIds = new Set<string>();
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
-          if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
+          if (isDocBelongingToUser(data, activeUid, activeEmail) && !seenIds.has(docSnap.id)) {
             seenIds.add(docSnap.id);
             results.push({ id: docSnap.id, ...data });
           }
         });
 
         // Update local storage cache
-        setLocalItems(colName, results, currentUid);
+        setLocalItems(colName, results, activeUid);
         hub.latestData = results;
         hub.lastUpdated = Date.now();
 
@@ -1777,8 +1815,9 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
             hub.unsub = null;
           }
         }
-        const fallbackRaw = getLocalItems(colName, currentUid);
-        const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, currentUid, currentEmail)) : [];
+        const activeEff = getEffectiveUidAndEmail();
+        const fallbackRaw = getLocalItems(colName, activeEff.uid);
+        const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, activeEff.uid, activeEff.email)) : [];
         hub.latestData = fallbackList;
         hub.callbacks.forEach(cb => {
           try { cb(fallbackList); } catch (_) {}

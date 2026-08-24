@@ -31,6 +31,8 @@ export interface AttendanceRecord {
   present: string[]; // List of Student IDs
   absent: string[];  // List of Student IDs
   late?: string[];   // List of Student IDs
+  excused?: string[]; // List of excused absent Student IDs
+  excuseReasons?: Record<string, string>; // mapping studentId to excuse reason
   isNoAbsence: boolean;
   timestamp: any;
   userId?: string;
