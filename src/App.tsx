@@ -62,23 +62,34 @@ import {
 } from "lucide-react";
 
 function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay" {
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashIdx = window.location.hash.indexOf("?");
+  const hashSearch = hashIdx !== -1 ? new URLSearchParams(window.location.hash.substring(hashIdx)) : null;
+
+  const page = (searchParams.get("page") || hashSearch?.get("page") || "").toLowerCase();
+  
+  if (page === "super-admin") return "super-admin";
+  if (page === "morning-delay") return "morning-delay";
+  if (page === "stats-only" || page === "stats") return "stats-only";
+  if (page === "teacher") return "teacher";
+  if (page === "admin") return "admin";
+
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
-  const search = window.location.search.toLowerCase();
-  
-  if (path.includes("super-admin") || hash.includes("super-admin") || search.includes("super-admin") || search.includes("page=super-admin")) {
+
+  if (path.includes("super-admin") || hash.includes("super-admin")) {
     return "super-admin";
   }
-  if (path.includes("morning-delay") || hash.includes("morning-delay") || search.includes("morning-delay") || search.includes("page=morning-delay")) {
+  if (path.includes("morning-delay") || hash.includes("morning-delay")) {
     return "morning-delay";
   }
-  if (path.includes("stats-only") || hash.includes("stats-only") || search.includes("stats-only") || search.includes("page=stats-only")) {
+  if (path.includes("stats-only") || hash.includes("stats-only")) {
     return "stats-only";
   }
-  if (path.includes("/teacher") || hash.includes("teacher") || search.includes("page=teacher") || search.includes("teacher")) {
+  if (path.includes("/teacher") || hash.includes("#/teacher")) {
     return "teacher";
   }
-  if (path.includes("/admin") || hash.includes("admin") || search.includes("page=admin") || search.includes("admin")) {
+  if (path.includes("/admin") || hash.includes("#/admin")) {
     return "admin";
   }
 
@@ -487,7 +498,13 @@ export default function App() {
     if (ownerEmail && !ownerEmail.endsWith("@school.com")) query += `&email=${encodeURIComponent(ownerEmail)}`;
     if (schoolName) query += `&school=${encodeURIComponent(schoolName)}`;
 
-    return `${window.location.origin}${window.location.pathname}?${query}#/${pageValue}`;
+    const targetPath = pageValue === "admin" ? "/admin" 
+      : pageValue === "super-admin" ? "/super-admin" 
+      : pageValue === "morning-delay" ? "/morning-delay" 
+      : pageValue === "teacher" ? "/teacher" 
+      : "/";
+
+    return `${window.location.origin}${targetPath}?${query}#/${pageValue}`;
   };
 
   // Robust clipboard copy function with textarea fallback for iframes and permissions
@@ -1577,6 +1594,7 @@ export default function App() {
                 grades={grades} 
                 classes={classes} 
                 teachers={teachers} 
+                students={students}
                 onRefreshStats={handleRefreshData}
                 activeTab={teacherTab}
                 setActiveTab={setTeacherTab}

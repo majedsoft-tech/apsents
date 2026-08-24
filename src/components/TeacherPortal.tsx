@@ -35,6 +35,7 @@ interface TeacherPortalProps {
   grades: Grade[];
   classes: Class[];
   teachers: Teacher[];
+  students?: Student[];
   onRefreshStats?: () => void;
   activeTab?: "attendance" | "behavior";
   setActiveTab?: (tab: "attendance" | "behavior") => void;
@@ -73,7 +74,7 @@ const getTodayDateString = () => {
   return `${year}-${month}-${day}`;
 };
 
-export default function TeacherPortal({ grades, classes, teachers, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo, schoolName, isDirectTeacherLink, globalProgress, setGlobalProgress }: TeacherPortalProps) {
+export default function TeacherPortal({ grades, classes, teachers, students: propStudents, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo, schoolName, isDirectTeacherLink, globalProgress, setGlobalProgress }: TeacherPortalProps) {
   // Filter Selection States
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [selectedGradeId, setSelectedGradeId] = useState<string>("");
@@ -209,7 +210,13 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
 
       setAttendanceLoading(true);
       try {
-        const studentList = await getStudentsByClass(selectedGradeId, selectedClassId);
+        let studentList: Student[] = [];
+        if (propStudents && propStudents.length > 0) {
+          studentList = propStudents.filter(s => s.gradeId === selectedGradeId && s.classId === selectedClassId);
+        } else {
+          studentList = await getStudentsByClass(selectedGradeId, selectedClassId);
+        }
+
         if (!active) return;
         setStudents(studentList);
 
@@ -269,7 +276,7 @@ export default function TeacherPortal({ grades, classes, teachers, onRefreshStat
       active = false;
       if (unsubscribe) unsubscribe();
     };
-  }, [selectedGradeId, selectedClassId, selectedPeriod]);
+  }, [selectedGradeId, selectedClassId, selectedPeriod, propStudents]);
 
   // Fetch behavior records when selected student changes (Real-time live-sync!)
   useEffect(() => {

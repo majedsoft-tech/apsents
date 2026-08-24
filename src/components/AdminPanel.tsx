@@ -1520,7 +1520,7 @@ export default function AdminPanel({
   const behaviorsReceivedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if ((isAuthenticated || isReadOnly) && activeSubTab === "stats") {
+    if (isAuthenticated || isReadOnly) {
       setStatsLoading(true);
       
       const runCompute = () => {
@@ -1562,14 +1562,14 @@ export default function AdminPanel({
         unsubDelays();
       };
     }
-  }, [isAuthenticated, isReadOnly, activeSubTab]);
+  }, [isAuthenticated, isReadOnly]);
 
-  // Re-compute stats when students, classes, or grades change without tearing down subscriptions
+  // Re-compute stats when students, classes, grades, or activeSubTab change
   useEffect(() => {
-    if ((isAuthenticated || isReadOnly) && activeSubTab === "stats" && cachedAttendanceRef.current.length > 0) {
+    if ((isAuthenticated || isReadOnly) && cachedAttendanceRef.current.length > 0) {
       computeStatistics(cachedAttendanceRef.current, cachedBehaviorsRef.current, behaviorsReceivedRef.current);
     }
-  }, [students, classes, grades]);
+  }, [students, classes, grades, activeSubTab]);
 
   // --- CRUD HANDLERS (Grades & Classes) ---
   const handleAddGradeSubmit = async (e: React.FormEvent) => {

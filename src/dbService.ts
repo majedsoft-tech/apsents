@@ -316,6 +316,33 @@ interface CollectionHub {
 
 const collectionHubs = new Map<string, CollectionHub>();
 
+// Cross-tab and Cross-Window Real-time Broadcast Channel for instant (0ms) sync
+let realTimeSyncChannel: BroadcastChannel | null = null;
+if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
+  try {
+    realTimeSyncChannel = new BroadcastChannel("school_realtime_instant_sync");
+    realTimeSyncChannel.onmessage = (event) => {
+      const data = event.data;
+      if (data && data.colName) {
+        notifyCollectionSubscribers(data.colName, data.items, true);
+      }
+    };
+  } catch (e) {}
+}
+
+// Storage event listener fallback (for iframes / cross-tab contexts)
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key && e.key.startsWith("school_offline_cache_")) {
+      const parts = e.key.split("_");
+      const colName = parts[parts.length - 1];
+      if (colName && collectionHubs.has(colName)) {
+        notifyCollectionSubscribers(colName, undefined, true);
+      }
+    }
+  });
+}
+
 function getCollectionHub(colName: string): CollectionHub {
   let hub = collectionHubs.get(colName);
   if (!hub) {
@@ -331,7 +358,7 @@ function getCollectionHub(colName: string): CollectionHub {
   return hub;
 }
 
-function notifyCollectionSubscribers(colName: string, items?: any[]) {
+function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadcast: boolean = false) {
   const hub = collectionHubs.get(colName);
   if (!hub) return;
   const eff = getEffectiveUidAndEmail();
@@ -347,6 +374,17 @@ function notifyCollectionSubscribers(colName: string, items?: any[]) {
   hub.callbacks.forEach(cb => {
     try { cb(dataToBroadcast); } catch (_) {}
   });
+
+  // Broadcast to other tabs/windows in real time (0ms)
+  if (!fromBroadcast && realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        colName,
+        items: dataToBroadcast,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
 }
 
 // Helper to check if a document belongs to a specific user/school
@@ -930,7 +968,7 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     timestamp: Date.now(),
     updatedAt: Date.now()
   }, { merge: true }).catch((err: any) => {
-    console.warn("Background Firestore attendance save notice:", err);
+    handleFirestoreError(err);
   });
 }
 
@@ -1144,7 +1182,7 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
     timestamp: Date.now(),
     updatedAt: Date.now()
   }, { merge: true }).catch((err) => {
-    console.warn("Background Firestore delay save notice:", err);
+    handleFirestoreError(err);
   });
 
   return recordId;

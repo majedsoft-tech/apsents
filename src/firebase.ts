@@ -2,9 +2,15 @@ import { initializeApp } from "firebase/app";
 import { 
   initializeFirestore, 
   persistentLocalCache, 
-  persistentMultipleTabManager 
+  persistentMultipleTabManager,
+  setLogLevel
 } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+
+// Suppress internal Firestore network and quota exhaustion backoff logs in console
+try {
+  setLogLevel("silent");
+} catch (_) {}
 
 // Explicit Firebase Project Configuration provided by user
 export const firebaseConfig = {
