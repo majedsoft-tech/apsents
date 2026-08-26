@@ -1,6 +1,17 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  getFirestore,
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  setLogLevel
+} from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+
+// Suppress internal Firestore network and quota exhaustion backoff logs in console
+try {
+  setLogLevel("silent");
+} catch (_) {}
 
 // Explicit Firebase Project Configuration provided by user
 export const firebaseConfig = {
@@ -16,8 +27,20 @@ export const firebaseConfig = {
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore with standard real-time WebSocket connection
-export const db = getFirestore(app);
+// Initialize Firestore with IndexedDB local persistence and multi-tab synchronization
+let firestoreInstance;
+try {
+  firestoreInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    }),
+    ignoreUndefinedProperties: true,
+  });
+} catch (_) {
+  firestoreInstance = getFirestore(app);
+}
+
+export const db = firestoreInstance;
 
 // Initialize Auth
 export const auth = getAuth(app);
