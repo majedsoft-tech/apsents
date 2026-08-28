@@ -31,7 +31,8 @@ import {
   subscribeToAllBehaviorRecords,
   subscribeToAllMorningDelayRecords,
   purgeAllServerAndTemporaryData,
-  purgeDeletedAndOrphanedData
+  purgeDeletedAndOrphanedData,
+  getLocalCollection
 } from "../dbService";
 import { 
   Lock, 
@@ -1234,11 +1235,58 @@ export default function AdminPanel({
 
         const displayTime = actualTime || pTime;
 
+        // Robust student name resolver
+        const resolveStudentName = (stId: string, recordObj?: any): string => {
+          if (!stId) return "";
+          if (stId === "no-absence") return "لا يوجد غياب أو تأخر";
+
+          // 1. Direct from record's embedded studentNames mapping
+          if (recordObj?.studentNames && typeof recordObj.studentNames === "object" && recordObj.studentNames[stId]) {
+            return recordObj.studentNames[stId];
+          }
+
+          // 2. Lookup in current students state
+          const student = students.find(s => s && (s.id === stId || s.name === stId || s.id?.toLowerCase() === stId.toLowerCase()));
+          if (student && student.name && student.name.trim()) {
+            return student.name.trim();
+          }
+
+          // 3. Lookup in local cached students
+          try {
+            const cached = getLocalCollection<Student>("students");
+            const foundCached = cached.find(s => s && (s.id === stId || s.name === stId || s.id?.toLowerCase() === stId.toLowerCase()));
+            if (foundCached && foundCached.name && foundCached.name.trim()) {
+              return foundCached.name.trim();
+            }
+          } catch (_) {}
+
+          // 4. Scan all localStorage items for any student object matching this ID
+          if (stId.startsWith("stu_") || stId.startsWith("temp_") || /^[a-zA-Z0-9_-]{12,}$/.test(stId)) {
+            try {
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && (key.includes("student") || key.includes("local_db") || key.includes("cached"))) {
+                  const raw = localStorage.getItem(key);
+                  if (raw && raw.includes(stId)) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                      const matched = parsed.find((item: any) => item?.id === stId);
+                      if (matched?.name) return matched.name;
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
+            return "طالب مسجل";
+          }
+
+          return stId;
+        };
+
         // 1. Process absent students
         if (!rec.isNoAbsence && rec.absent && rec.absent.length > 0) {
           rec.absent.forEach(stId => {
-            const student = students.find(s => s.id === stId || s.name === stId);
-            const studentName = student ? student.name : stId;
+            const studentName = resolveStudentName(stId, rec);
             const entry = {
               id: `${rec.id}-${stId}-abs`,
               recordId: rec.id,
@@ -1274,8 +1322,7 @@ export default function AdminPanel({
         // 2. Process late students from classroom attendance (rec.late)
         if (rec.late && Array.isArray(rec.late) && rec.late.length > 0) {
           rec.late.forEach(stId => {
-            const student = students.find(s => s.id === stId || s.name === stId);
-            const studentName = student ? student.name : stId;
+            const studentName = resolveStudentName(stId, rec);
             const entry = {
               id: `${rec.id}-${stId}-late`,
               recordId: rec.id,
@@ -1501,34 +1548,32 @@ export default function AdminPanel({
       records.forEach(rec => {
         if (!rec.isNoAbsence) {
           (rec.absent || []).forEach(stId => {
-            const student = students.find(s => s.id === stId);
-            if (student) {
-              results.push({
-                id: `${rec.id}-${stId}-abs`,
-                recordId: rec.id,
-                studentId: stId,
-                isAbsent: true,
-                studentName: student.name,
-                status: "غائب",
-                period: rec.period,
-                teacherName: teachers.find(t => t.id === rec.teacherId)?.name || "غير محدد"
-              });
-            }
+            const student = students.find(s => s.id === stId || s.name === stId);
+            const studentName = student?.name || (rec.studentNames && rec.studentNames[stId]) || stId;
+            results.push({
+              id: `${rec.id}-${stId}-abs`,
+              recordId: rec.id,
+              studentId: stId,
+              isAbsent: true,
+              studentName: studentName || "طالب غائب",
+              status: "غائب",
+              period: rec.period,
+              teacherName: teachers.find(t => t.id === rec.teacherId)?.name || "غير محدد"
+            });
           });
           (rec.late || []).forEach(stId => {
-            const student = students.find(s => s.id === stId);
-            if (student) {
-              results.push({
-                id: `${rec.id}-${stId}-late`,
-                recordId: rec.id,
-                studentId: stId,
-                isAbsent: false,
-                studentName: student.name,
-                status: "متأخر",
-                period: rec.period,
-                teacherName: teachers.find(t => t.id === rec.teacherId)?.name || "غير محدد"
-              });
-            }
+            const student = students.find(s => s.id === stId || s.name === stId);
+            const studentName = student?.name || (rec.studentNames && rec.studentNames[stId]) || stId;
+            results.push({
+              id: `${rec.id}-${stId}-late`,
+              recordId: rec.id,
+              studentId: stId,
+              isAbsent: false,
+              studentName: studentName || "طالب متأخر",
+              status: "متأخر",
+              period: rec.period,
+              teacherName: teachers.find(t => t.id === rec.teacherId)?.name || "غير محدد"
+            });
           });
         }
       });

@@ -339,7 +339,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    const isDirectPortal = isDirectTeacherLink || isDirectMorningDelayLink || appMode === "teacher" || appMode === "morning-delay";
+    const isDirectPortal = isDirectTeacherLink || isDirectMorningDelayLink || appMode === "teacher" || appMode === "morning-delay" || appMode === "stats-only";
     if (!currentUser && !isDirectPortal) {
       setGrades([]);
       setClasses([]);

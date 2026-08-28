@@ -392,6 +392,13 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
           .map(s => s.id)
           .filter(id => !absentStudentIds.includes(id) && !lateStudentIds.includes(id));
 
+      const studentNamesMap: Record<string, string> = {};
+      students.forEach(s => {
+        if (s.id && s.name) {
+          studentNamesMap[s.id] = s.name.trim();
+        }
+      });
+
       await saveAttendanceRecord({
         date: getTodayDateString(),
         period: selectedPeriod,
@@ -401,6 +408,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         present: presentIds,
         absent: absentStudentIds,
         late: lateStudentIds,
+        studentNames: studentNamesMap,
         isNoAbsence: absentStudentIds.length === 0 && lateStudentIds.length === 0
       });
 

@@ -33,6 +33,7 @@ export interface AttendanceRecord {
   late?: string[];   // List of Student IDs
   excused?: string[]; // List of excused absent Student IDs
   excuseReasons?: Record<string, string>; // mapping studentId to excuse reason
+  studentNames?: Record<string, string>; // mapping studentId to studentName
   isNoAbsence: boolean;
   timestamp: any;
   userId?: string;
