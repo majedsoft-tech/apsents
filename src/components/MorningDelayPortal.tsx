@@ -49,6 +49,8 @@ interface MorningDelayPortalProps {
   isDirectLink?: boolean;
   globalProgress?: { active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string };
   setGlobalProgress?: React.Dispatch<React.SetStateAction<{ active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string }>>;
+  isGoogleAuthenticated?: boolean;
+  onRequireGoogleLogin?: () => void;
 }
 
 const COMMON_REASONS = [
@@ -85,7 +87,9 @@ export default function MorningDelayPortal({
   navigateTo,
   schoolName = "",
   isDirectLink = false,
-  setGlobalProgress
+  setGlobalProgress,
+  isGoogleAuthenticated,
+  onRequireGoogleLogin
 }: MorningDelayPortalProps) {
   // Date State
   const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString());
@@ -126,6 +130,8 @@ export default function MorningDelayPortal({
   const [confirmDeleteState, setConfirmDeleteState] = useState<{
     recordId: string;
     studentName: string;
+    studentId?: string;
+    date?: string;
   } | null>(null);
 
   // Save recorder name to localStorage
@@ -217,6 +223,10 @@ export default function MorningDelayPortal({
 
   // Quick record handler for a student - Records exact real-time on click instantly!
   const handleRecordStudent = async (student: Student, overrideReason?: string) => {
+    if (!isGoogleAuthenticated && !isDirectLink) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     const gr = grades.find(g => g.id === student.gradeId);
     const cl = classes.find(c => c.id === student.classId);
     const finalReason = overrideReason || (selectedReason === "أخرى" ? (customReason || "أخرى") : selectedReason);
@@ -269,26 +279,38 @@ export default function MorningDelayPortal({
   };
 
   // Delete Record Handler - opens custom in-app confirmation modal
-  const handleDeleteRecord = (recordId: string, studentName?: string) => {
+  const handleDeleteRecord = (recordId: string, studentName?: string, studentId?: string, date?: string) => {
+    if (!isGoogleAuthenticated && !isDirectLink) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     setConfirmDeleteState({
       recordId,
-      studentName: studentName || "الطالب"
+      studentName: studentName || "الطالب",
+      studentId,
+      date: date || selectedDate
     });
   };
 
   // Execution of the confirmed deletion
   const executeConfirmDelete = async () => {
     if (!confirmDeleteState) return;
-    const { recordId, studentName } = confirmDeleteState;
+    const { recordId, studentName, studentId, date } = confirmDeleteState;
     setConfirmDeleteState(null);
 
+    const targetDate = date || selectedDate;
+
     // Optimistic instant remove from UI (0ms delay)
-    setRecords(prev => prev.filter(r => r.id !== recordId));
+    setRecords(prev => prev.filter(r => {
+      if (r.id === recordId) return false;
+      if (studentId && targetDate && r.studentId === studentId && r.date === targetDate) return false;
+      return true;
+    }));
     setSaveToast(`تم حذف وإلغاء تسجيل تأخر (${studentName}) بنجاح`);
     setTimeout(() => setSaveToast(null), 2500);
 
     try {
-      await deleteMorningDelayRecord(recordId);
+      await deleteMorningDelayRecord(recordId, { studentId, date: targetDate });
     } catch (err) {
       console.error("Error deleting morning delay:", err);
     }
@@ -634,7 +656,7 @@ export default function MorningDelayPortal({
                                     e.stopPropagation();
                                     const currentRec = rec || records.find(r => r.studentId === st.id);
                                     if (currentRec) {
-                                      handleDeleteRecord(currentRec.id, st.name);
+                                      handleDeleteRecord(currentRec.id, st.name, currentRec.studentId || st.id, currentRec.date || selectedDate);
                                     }
                                   }}
                                   className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100 rounded-xl transition cursor-pointer"
@@ -694,7 +716,7 @@ export default function MorningDelayPortal({
                                     e.stopPropagation();
                                     const currentRec = rec || records.find(r => r.studentId === st.id);
                                     if (currentRec) {
-                                      handleDeleteRecord(currentRec.id, st.name);
+                                      handleDeleteRecord(currentRec.id, st.name, currentRec.studentId || st.id, currentRec.date || selectedDate);
                                     }
                                   }}
                                   className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
@@ -882,7 +904,7 @@ export default function MorningDelayPortal({
                       <td className="p-3 text-center">
                         <button
                           type="button"
-                          onClick={() => handleDeleteRecord(rec.id, rec.studentName)}
+                          onClick={() => handleDeleteRecord(rec.id, rec.studentName, rec.studentId, rec.date)}
                           className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                           title="حذف هذا السجل"
                         >

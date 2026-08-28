@@ -44,6 +44,8 @@ interface TeacherPortalProps {
   isDirectTeacherLink?: boolean;
   globalProgress?: { active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string };
   setGlobalProgress?: React.Dispatch<React.SetStateAction<{ active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string }>>;
+  isGoogleAuthenticated?: boolean;
+  onRequireGoogleLogin?: () => void;
 }
 
 const PERIODS = [
@@ -74,7 +76,7 @@ const getTodayDateString = () => {
   return `${year}-${month}-${day}`;
 };
 
-export default function TeacherPortal({ grades, classes, teachers, students: propStudents, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo, schoolName, isDirectTeacherLink, globalProgress, setGlobalProgress }: TeacherPortalProps) {
+export default function TeacherPortal({ grades, classes, teachers, students: propStudents, onRefreshStats, activeTab: propActiveTab, setActiveTab: propSetActiveTab, navigateTo, schoolName, isDirectTeacherLink, globalProgress, setGlobalProgress, isGoogleAuthenticated, onRequireGoogleLogin }: TeacherPortalProps) {
   // Filter Selection States
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [selectedGradeId, setSelectedGradeId] = useState<string>("");
@@ -368,6 +370,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save attendance (Ultra-fast instant save executed directly with animated status popup)
   const handleSaveAttendance = async () => {
+    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (!selectedTeacherId || !selectedGradeId || !selectedClassId) {
       setSaveStatus({ type: "error", message: "الرجاء اختيار المعلم والصف والفصل أولاً" });
       return;
@@ -407,7 +413,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
       // Auto close save popup smoothly after displaying success
       setTimeout(() => {
         setShowSaveAttendanceModal(false);
-      }, 1200);
+      }, 1500);
 
       // Auto clear inline message after 3s
       setTimeout(() => setSaveStatus(null), 3000);
@@ -424,6 +430,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save behavior observation
   const handleSaveBehavior = async () => {
+    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (!selectedStudentId) {
       setBehaviorSaveStatus({ type: "error", message: "الرجاء تحديد طالب أولاً" });
       return;
@@ -488,6 +498,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save all pending behaviors at once
   const handleSaveAllBehaviors = async () => {
+    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (totalPendingBehaviorsCount === 0) return;
 
     const teacher = teachers.find(t => t.id === selectedTeacherId);
@@ -738,43 +752,22 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         </div>
       </div>
 
-      {/* UNIFIED STUDENT LIST CARD WITH INTEGRATED TABS */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col mb-24">
-        {/* Integrated Tabs Selector */}
-        <div 
-          style={{ top: "calc(var(--header-height, 0px) + var(--first-sticky-height, 168px))" }}
-          className="sticky z-20 bg-slate-50/90 backdrop-blur-md pt-4 px-4 rounded-t-2xl border-b border-slate-200 transition-all duration-150"
-        >
-          <div className="flex items-end w-full relative z-10 -mb-[1px]">
-            <button
-              type="button"
-              onClick={() => setActiveTab("attendance")}
-              className={`relative flex-1 flex items-center justify-center gap-1.5 py-3.5 rounded-tr-[28px] rounded-tl-lg rounded-b-none text-xs md:text-sm font-black transition-all duration-300 cursor-pointer border border-b-0 ${
-                activeTab === "attendance"
-                  ? "bg-blue-50 text-blue-800 border-blue-200 border-t-3 border-t-blue-600 shadow-[0_-4px_12px_rgba(59,130,246,0.08)] z-20 scale-[1.02]"
-                  : "bg-slate-100 text-slate-500 hover:bg-slate-200/80 hover:text-slate-700 border-slate-200/70 z-10"
-              }`}
-            >
-              <span>🔴</span>
-              <span>الغياب اليومي</span>
-            </button>
-            <button
-              type="button"
-              disabled
-              title="رصد السلوك غير فعّال حالياً"
-              className="relative flex-1 flex items-center justify-center gap-1.5 py-3.5 rounded-tl-[28px] rounded-tr-lg rounded-b-none text-xs md:text-sm font-bold border border-b-0 -mr-4 bg-slate-100/60 text-slate-400 border-slate-200/60 cursor-not-allowed opacity-60 select-none z-10"
-            >
-              <span className="opacity-60">📝</span>
-              <span className="line-through decoration-slate-400/70">رصد السلوك</span>
-              <span className="text-[10px] bg-slate-200/80 text-slate-500 font-bold px-1.5 py-0.5 rounded-full mr-1">معطّل</span>
-            </button>
+      {/* UNIFIED STUDENT LIST CARD */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col mb-24 overflow-hidden">
+        {/* Header Banner */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 p-4 border-b border-slate-200/80 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></span>
+            <span className="text-sm font-black text-slate-800">رصد الحضور والغياب اليومي</span>
           </div>
+          <span className="text-2xs font-extrabold text-blue-700 bg-blue-100/70 px-2.5 py-1 rounded-full border border-blue-200">
+            الحصة: {selectedPeriod}
+          </span>
         </div>
 
         {/* TAB CONTENT: ATTENDANCE */}
-        {activeTab === "attendance" && (
-          <div className="flex flex-col">
-            {/* Students Attendance List Sub-Header */}
+        <div className="flex flex-col">
+          {/* Students Attendance List Sub-Header */}
             <div className="bg-slate-50/50 border-b border-slate-100 px-4 py-3 flex flex-wrap gap-3 justify-between items-center text-right">
               <div className="flex flex-col gap-0.5">
                 <span className="text-xs font-black text-slate-700">قائمة الطلاب ({students.length})</span>
@@ -872,447 +865,110 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                 })}
               </div>
             )}
-          </div>
-        )}
-
-        {/* TAB CONTENT: BEHAVIOR */}
-        {activeTab === "behavior" && (
-          <div className="flex flex-col">
-            {/* Behavior List Sub-Header */}
-            <div className="bg-slate-50/50 border-b border-slate-100 px-4 py-3 flex justify-between items-center text-right">
-              <span className="text-xs font-bold text-slate-500">سجل سلوكيات الطلاب ({students.length})</span>
-              <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">اضغط على الطالب لعرض السلوكيات السابقة، وعلامة + لإضافة سلوك جديد</span>
-            </div>
-
-            {attendanceLoading ? (
-              <div className="p-8 text-center text-slate-500 text-sm">جاري تحميل قائمة الطلاب...</div>
-            ) : students.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">لا يوجد طلاب مسجلين في هذا الفصل.</div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {students.map((student, idx) => {
-                  const isExpanded = expandedStudentId === student.id;
-                  const isDropdownOpen = activeDropdownStudentId === student.id;
-                  const currentStudentBehaviors = allBehaviors.filter(b => b.studentId === student.id);
-                  const behaviorCount = currentStudentBehaviors.length;
-                  const studentDrafts = pendingBehaviors[student.id] || [];
-
-                  return (
-                    <div
-                      key={`behavior-${student.id}-${idx}`}
-                      className={`relative flex flex-col transition-all border-b border-slate-100 last:border-b-0 ${
-                        isExpanded ? "bg-amber-50/10" : "hover:bg-slate-50/50 bg-white"
-                      }`}
-                    >
-                      {/* Independent Dropdown Backplate (Click Outside Listener) */}
-                      {isDropdownOpen && (
-                        <div 
-                          className="fixed inset-0 z-40 cursor-default bg-transparent"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveDropdownStudentId("");
-                          }}
-                        />
-                      )}
-
-                      {/* Student Header Row */}
-                      <div
-                        onClick={() => {
-                          const newExpandedId = isExpanded ? "" : student.id;
-                          setExpandedStudentId(newExpandedId);
-                          setSelectedStudentId(newExpandedId);
-                        }}
-                        className="flex flex-col px-4 py-3.5 cursor-pointer select-none"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                              {idx + 1}
-                            </span>
-                            <span className="text-sm font-semibold text-slate-800">
-                              {student.name}
-                            </span>
-                            
-                            {/* Behavior Count Badge */}
-                            {behaviorCount > 0 && (
-                              <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-black px-2 py-0.5 rounded-full">
-                                <span>📝 {behaviorCount} سلوكيات سابقة</span>
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const newDropdownId = isDropdownOpen ? "" : student.id;
-                                setActiveDropdownStudentId(newDropdownId);
-                              }}
-                              className={`p-1.5 rounded-lg border transition-all duration-200 flex items-center justify-center cursor-pointer ${
-                                isDropdownOpen 
-                                  ? "bg-amber-600 border-amber-600 text-white shadow-sm" 
-                                  : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
-                              }`}
-                              title="إضافة سلوك"
-                            >
-                              <Plus className={`w-4 h-4 transition-transform duration-200 ${isDropdownOpen ? "rotate-45" : ""}`} />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Student Drafts / Pending Behaviors list */}
-                        {studentDrafts.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
-                            {studentDrafts.map((beh, bIdx) => (
-                              <span
-                                key={bIdx}
-                                className="inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-800 border border-amber-500/20 text-[11px] font-bold px-2 py-1 rounded-lg shadow-3xs animate-in zoom-in duration-150"
-                              >
-                                <span>{beh}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPendingBehaviors(prev => {
-                                      const updated = { ...prev };
-                                      updated[student.id] = updated[student.id].filter((_, i) => i !== bIdx);
-                                      if (updated[student.id].length === 0) {
-                                        delete updated[student.id];
-                                      }
-                                      return updated;
-                                    });
-                                  }}
-                                  className="text-rose-600 hover:text-rose-800 font-extrabold cursor-pointer text-xs w-4 h-4 flex items-center justify-center rounded-full hover:bg-rose-50"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Floating Quick Behavior Selection Dropdown Menu (Opens Externally / z-50) */}
-                      {isDropdownOpen && (
-                        <div 
-                          className="absolute left-4 top-13 z-50 w-[calc(100%-2rem)] max-w-[340px] bg-white rounded-2xl border border-slate-200 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.15)] space-y-3.5 animate-in fade-in slide-in-from-top-3 duration-200 text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-                            <span className="text-xs font-black text-slate-800">اختر سلوكاً للإضافة مباشرة:</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveDropdownStudentId("");
-                              }}
-                              className="text-xs font-bold text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition"
-                            >
-                              إغلاق ×
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto pr-1">
-                            {VIOLATIONS.map((violation) => {
-                              const isAlreadyPending = studentDrafts.includes(violation);
-                              return (
-                                <button
-                                  key={violation}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPendingBehaviors(prev => {
-                                      const current = prev[student.id] || [];
-                                      let updatedList;
-                                      if (current.includes(violation)) {
-                                        updatedList = current.filter(v => v !== violation);
-                                      } else {
-                                        updatedList = [...current, violation];
-                                      }
-                                      
-                                      const updated = { ...prev };
-                                      if (updatedList.length === 0) {
-                                        delete updated[student.id];
-                                      } else {
-                                        updated[student.id] = updatedList;
-                                      }
-                                      return updated;
-                                    });
-                                    // CLOSE dropdown immediately after selection
-                                    setActiveDropdownStudentId("");
-                                  }}
-                                  className={`text-right text-xs font-bold px-3 py-2.5 rounded-xl border transition-all flex items-center justify-between cursor-pointer ${
-                                    isAlreadyPending
-                                      ? "bg-amber-600 text-white border-amber-600 shadow-xs"
-                                      : "bg-slate-50 hover:bg-amber-50 text-slate-700 border-slate-200/80 hover:border-amber-200"
-                                  }`}
-                                >
-                                  <span>{violation}</span>
-                                  {isAlreadyPending && <span className="text-white text-[10px] font-black">✓ نشط</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Custom Behavior Input */}
-                          <div className="border-t border-slate-150 pt-3 mt-1 space-y-1.5">
-                            <span className="block text-[11px] font-black text-slate-500">سلوك مخصص آخر غير مدرج:</span>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                placeholder="مثال: التأخر في تسليم الواجب..."
-                                id={`custom-violation-${student.id}`}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    const text = e.currentTarget.value.trim();
-                                    if (text) {
-                                      setPendingBehaviors(prev => {
-                                        const current = prev[student.id] || [];
-                                        if (current.includes(text)) return prev;
-                                        return { ...prev, [student.id]: [...current, text] };
-                                      });
-                                      e.currentTarget.value = "";
-                                      // CLOSE dropdown immediately after selection
-                                      setActiveDropdownStudentId("");
-                                    }
-                                  }
-                                }}
-                                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 text-right"
-                              />
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const inputEl = document.getElementById(`custom-violation-${student.id}`) as HTMLInputElement;
-                                  const text = inputEl?.value.trim();
-                                  if (text) {
-                                    setPendingBehaviors(prev => {
-                                      const current = prev[student.id] || [];
-                                      if (current.includes(text)) return prev;
-                                      return { ...prev, [student.id]: [...current, text] };
-                                    });
-                                    inputEl.value = "";
-                                    // CLOSE dropdown immediately after selection
-                                    setActiveDropdownStudentId("");
-                                  }
-                                }}
-                                className="bg-slate-800 hover:bg-slate-900 text-white font-extrabold text-xs px-4 py-2 rounded-xl shadow-xs transition active:scale-95 cursor-pointer"
-                              >
-                                إضافة
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Expanded Section (Previous History) */}
-                      {isExpanded && (
-                        <div className="px-4 pb-4 pt-2.5 border-t border-amber-100/30 space-y-3 bg-amber-50/5">
-                          {/* Previous Violations Log */}
-                          <div className="space-y-2">
-                            <span className="block text-xs font-bold text-slate-600">سجل المخالفات المسجلة للطالب:</span>
-                            
-                            {currentStudentBehaviors.length === 0 ? (
-                              <div className="bg-white/80 rounded-xl p-4 text-center text-slate-400 text-xs border border-dashed border-slate-200">
-                                لا يوجد ملاحظات مسجلة على هذا الطالب سابقاً 👍
-                              </div>
-                            ) : (
-                              <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto pr-1">
-                                {currentStudentBehaviors.map(record => (
-                                  <div 
-                                    key={record.id} 
-                                    className="bg-white border border-slate-100 rounded-xl p-3 text-[11px] space-y-1.5 relative shadow-3xs"
-                                  >
-                                    <div className="flex items-center justify-between border-b border-slate-50 pb-1">
-                                      <div className="flex items-center gap-1.5 font-bold text-slate-400">
-                                        <Calendar className="w-3 h-3 text-amber-500" />
-                                        <span>{record.date}</span>
-                                        <span className="text-slate-200">|</span>
-                                        <Clock className="w-3 h-3 text-amber-500" />
-                                        <span>{record.period}</span>
-                                      </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 font-bold text-slate-500">
-                                      <User className="w-3 h-3 text-amber-500" />
-                                      <span>المعلم: </span>
-                                      <span className="text-slate-700">{record.teacherName}</span>
-                                    </div>
-
-                                    <div className="flex items-start gap-1 font-bold text-amber-900 bg-amber-50/50 p-1.5 rounded-lg border border-amber-100/50">
-                                      <FileText className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                                      <div>
-                                        <span className="text-amber-950 font-black">{record.violation}</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        </div>
       </div>
 
-      {/* FLOATING SAVE BAR CONTAINER (Only when on Attendance tab) */}
-      {activeTab === "attendance" && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-3.5 max-w-md mx-auto shadow-[0_-8px_24px_rgba(15,23,42,0.08)] flex flex-col gap-2 rounded-t-2xl">
-          {/* Unsaved changes alert */}
-          {isDirty && students.length > 0 && (
-            <div className="flex items-center justify-center gap-1.5 text-xs font-black text-amber-700 bg-amber-50 border border-amber-200 py-1.5 px-3.5 rounded-full animate-pulse mx-auto">
-              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-              <span>⚠️ الرجاء حفظ التغييرات الحالية للغياب</span>
-            </div>
+      {/* FLOATING SAVE BAR CONTAINER */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-3.5 max-w-md mx-auto shadow-[0_-8px_24px_rgba(15,23,42,0.08)] flex flex-col gap-2 rounded-t-2xl">
+        {/* Unsaved changes alert */}
+        {isDirty && students.length > 0 && (
+          <div className="flex items-center justify-center gap-1.5 text-xs font-black text-amber-700 bg-amber-50 border border-amber-200 py-1.5 px-3.5 rounded-full animate-pulse mx-auto">
+            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+            <span>⚠️ الرجاء حفظ التغييرات الحالية للغياب</span>
+          </div>
+        )}
+
+        {/* Save Status Notification */}
+        {saveStatus && (
+          <div className={`p-2 rounded-xl text-center text-xs font-bold border transition ${
+            saveStatus.type === "success" 
+              ? "bg-emerald-50 text-emerald-800 border-emerald-200" 
+              : "bg-rose-50 text-rose-800 border-rose-200"
+          }`}>
+            {saveStatus.message}
+          </div>
+        )}
+
+        <motion.button
+          type="button"
+          onClick={handleSaveAttendance}
+          disabled={attendanceLoading || students.length === 0 || !isDirty}
+          className={`w-full font-extrabold text-white py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all ${
+            !isDirty || students.length === 0
+              ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
+              : absentStudentIds.length === 0
+              ? "bg-emerald-600 hover:bg-emerald-700 active:scale-98 cursor-pointer ring-4 ring-emerald-500/20" 
+              : "bg-blue-600 hover:bg-blue-700 active:scale-98 cursor-pointer ring-4 ring-blue-500/20"
+          }`}
+          animate={isDirty && students.length > 0 ? {
+            scale: [1, 1.03, 0.98, 1.03, 1],
+            y: [0, -3, 0],
+            boxShadow: absentStudentIds.length === 0 
+              ? [
+                  "0 4px 6px -1px rgba(16, 185, 129, 0.1), 0 2px 4px -2px rgba(16, 185, 129, 0.1)",
+                  "0 12px 20px -3px rgba(16, 185, 129, 0.45), 0 6px 8px -4px rgba(16, 185, 129, 0.45)",
+                  "0 4px 6px -1px rgba(16, 185, 129, 0.1), 0 2px 4px -2px rgba(16, 185, 129, 0.1)"
+                ]
+              : [
+                  "0 4px 6px -1px rgba(37, 99, 235, 0.1), 0 2px 4px -2px rgba(37, 99, 235, 0.1)",
+                  "0 12px 20px -3px rgba(37, 99, 235, 0.45), 0 6px 8px -4px rgba(37, 99, 235, 0.45)",
+                  "0 4px 6px -1px rgba(37, 99, 235, 0.1), 0 2px 4px -2px rgba(37, 99, 235, 0.1)"
+                ]
+          } : {}}
+          transition={{
+            repeat: Infinity,
+            duration: 1.5,
+            ease: "easeInOut"
+          }}
+        >
+          {attendanceLoading ? (
+            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" id="save-progress-circle">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            <Save className={`w-5 h-5 ${isDirty && students.length > 0 ? "animate-bounce" : ""}`} />
           )}
-
-          {/* Save Status Notification */}
-          {saveStatus && (
-            <div className={`p-2 rounded-xl text-center text-xs font-bold border transition ${
-              saveStatus.type === "success" 
-                ? "bg-emerald-50 text-emerald-800 border-emerald-200" 
-                : "bg-rose-50 text-rose-800 border-rose-200"
-            }`}>
-              {saveStatus.message}
-            </div>
-          )}
-
-          <motion.button
-            type="button"
-            onClick={handleSaveAttendance}
-            disabled={attendanceLoading || students.length === 0 || !isDirty}
-            className={`w-full font-extrabold text-white py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all ${
-              !isDirty || students.length === 0
-                ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
-                : absentStudentIds.length === 0
-                ? "bg-emerald-600 hover:bg-emerald-700 active:scale-98 cursor-pointer ring-4 ring-emerald-500/20" 
-                : "bg-blue-600 hover:bg-blue-700 active:scale-98 cursor-pointer ring-4 ring-blue-500/20"
-            }`}
-            animate={isDirty && students.length > 0 ? {
-              scale: [1, 1.03, 0.98, 1.03, 1],
-              y: [0, -3, 0],
-              boxShadow: absentStudentIds.length === 0 
-                ? [
-                    "0 4px 6px -1px rgba(16, 185, 129, 0.1), 0 2px 4px -2px rgba(16, 185, 129, 0.1)",
-                    "0 12px 20px -3px rgba(16, 185, 129, 0.45), 0 6px 8px -4px rgba(16, 185, 129, 0.45)",
-                    "0 4px 6px -1px rgba(16, 185, 129, 0.1), 0 2px 4px -2px rgba(16, 185, 129, 0.1)"
-                  ]
-                : [
-                    "0 4px 6px -1px rgba(37, 99, 235, 0.1), 0 2px 4px -2px rgba(37, 99, 235, 0.1)",
-                    "0 12px 20px -3px rgba(37, 99, 235, 0.45), 0 6px 8px -4px rgba(37, 99, 235, 0.45)",
-                    "0 4px 6px -1px rgba(37, 99, 235, 0.1), 0 2px 4px -2px rgba(37, 99, 235, 0.1)"
-                  ]
-            } : {}}
-            transition={{
-              repeat: Infinity,
-              duration: 1.5,
-              ease: "easeInOut"
-            }}
-          >
-            {attendanceLoading ? (
-              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" id="save-progress-circle">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : (
-              <Save className={`w-5 h-5 ${isDirty && students.length > 0 ? "animate-bounce" : ""}`} />
-            )}
-            <span>
-              {attendanceLoading 
-                ? "جاري حفظ الغياب..." 
-                : !isDirty
-                ? (hasRecord ? "تم حفظ التغييرات بنجاح ✓" : "بانتظار رصد الحضور والغياب... 📝")
-                : absentStudentIds.length === 0 
-                ? "حفظ (الجميع حضور) 💾" 
-                : `حفظ الغياب (${absentStudentIds.length} غائب) 💾`}
-            </span>
-          </motion.button>
-        </div>
-      )}
-
-      {/* FLOATING SAVE BAR CONTAINER (Only when on Behavior tab) */}
-      {activeTab === "behavior" && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-3.5 max-w-md mx-auto shadow-[0_-8px_24px_rgba(15,23,42,0.08)] flex flex-col gap-2 rounded-t-2xl">
-          {/* Unsaved changes alert */}
-          {isBehaviorDirty && (
-            <div className="flex items-center justify-center gap-1.5 text-xs font-black text-amber-700 bg-amber-50 border border-amber-200 py-1.5 px-3.5 rounded-full animate-pulse mx-auto">
-              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-              <span>⚠️ لديك {totalPendingBehaviorsCount} سلوكيات معلقة لم يتم حفظها بعد</span>
-            </div>
-          )}
-
-          {/* Behavior Save Status Message */}
-          {behaviorSaveStatus && (
-            <div className={`p-2 rounded-xl text-center text-xs font-bold border transition ${
-              behaviorSaveStatus.type === "success" 
-                ? "bg-emerald-50 text-emerald-800 border-emerald-200" 
-                : "bg-rose-50 text-rose-800 border-rose-200"
-            }`}>
-              {behaviorSaveStatus.message}
-            </div>
-          )}
-
-          <motion.button
-            type="button"
-            onClick={handleSaveAllBehaviors}
-            disabled={behaviorLoading || !isBehaviorDirty}
-            className={`w-full font-extrabold text-white py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all ${
-              !isBehaviorDirty
-                ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none"
-                : "bg-amber-600 hover:bg-amber-700 active:scale-98 cursor-pointer ring-4 ring-amber-500/20"
-            }`}
-            animate={isBehaviorDirty ? {
-              scale: [1, 1.03, 0.98, 1.03, 1],
-              y: [0, -3, 0],
-              boxShadow: [
-                "0 4px 6px -1px rgba(217, 119, 6, 0.1), 0 2px 4px -2px rgba(217, 119, 6, 0.1)",
-                "0 12px 20px -3px rgba(217, 119, 6, 0.45), 0 6px 8px -4px rgba(217, 119, 6, 0.45)",
-                "0 4px 6px -1px rgba(217, 119, 6, 0.1), 0 2px 4px -2px rgba(217, 119, 6, 0.1)"
-              ]
-            } : {}}
-            transition={{
-              repeat: Infinity,
-              duration: 1.5,
-              ease: "easeInOut"
-            }}
-          >
-            {behaviorLoading ? (
-              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : (
-              <Save className={`w-5 h-5 ${isBehaviorDirty ? "animate-bounce" : ""}`} />
-            )}
-            <span>
-              {behaviorLoading 
-                ? "جاري حفظ السلوكيات..." 
-                : !isBehaviorDirty
-                ? "بانتظار رصد السلوكيات... 📝"
-                : `حفظ السلوكيات لـ (${Object.keys(pendingBehaviors).length} طلاب) 💾`}
-            </span>
-          </motion.button>
-        </div>
-      )}
+          <span>
+            {attendanceLoading 
+              ? "جاري حفظ الغياب..." 
+              : !isDirty
+              ? (hasRecord ? "تم حفظ التغييرات بنجاح ✓" : "بانتظار رصد الحضور والغياب... 📝")
+              : absentStudentIds.length === 0 
+              ? "حفظ (الجميع حضور) 💾" 
+              : `حفظ الغياب (${absentStudentIds.length} غائب) 💾`}
+          </span>
+        </motion.button>
+      </div>
 
       {/* POPUP MODAL: DIRECT INSTANT SAVING STATUS POPUP (نافذة منبثقة فورية لحفظ الغياب مباشرة) */}
       {showSaveAttendanceModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-4">
+        <div 
+          onClick={() => {
+            if (!attendanceLoading) setShowSaveAttendanceModal(false);
+          }}
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-4 cursor-pointer"
+        >
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center text-center p-6 space-y-4" 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center text-center p-6 space-y-4 relative cursor-default" 
             dir="rtl"
           >
+            <button
+              type="button"
+              onClick={() => {
+                setShowSaveAttendanceModal(false);
+                setAttendanceLoading(false);
+              }}
+              className="absolute top-4 left-4 w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xs font-black transition cursor-pointer z-10"
+              title="إغلاق"
+            >
+              ✕
+            </button>
+
             {attendanceLoading ? (
               <div className="flex flex-col items-center justify-center py-4 space-y-3">
                 <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center relative shadow-inner">
@@ -1324,7 +980,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                 </div>
               </div>
             ) : saveStatus?.type === "error" ? (
-              <div className="flex flex-col items-center justify-center py-4 space-y-3">
+              <div className="flex flex-col items-center justify-center py-3 space-y-3 w-full">
                 <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shadow-inner">
                   <X className="w-8 h-8" />
                 </div>
@@ -1332,9 +988,16 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   <h3 className="text-base font-black text-rose-800">تعذر الحفظ</h3>
                   <p className="text-xs text-rose-600 font-medium">{saveStatus.message}</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSaveAttendanceModal(false)}
+                  className="w-full py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                >
+                  إغلاق
+                </button>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-4 space-y-3">
+              <div className="flex flex-col items-center justify-center py-2 space-y-3 w-full">
                 <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
                   <CheckCircle className="w-8 h-8" />
                 </div>
@@ -1346,9 +1009,16 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                       : `تم رصد غياب ${absentStudentIds.length} طالب بنجاح 📋`}
                   </p>
                 </div>
-                <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-2xs font-extrabold text-slate-600">
+                <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-2xs font-extrabold text-slate-600 w-full">
                   {grades.find(g => g.id === selectedGradeId)?.name} - {classes.find(c => c.id === selectedClassId)?.name} | {selectedPeriod}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSaveAttendanceModal(false)}
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                >
+                  تم، إغلاق النافذة ✓
+                </button>
               </div>
             )}
           </motion.div>

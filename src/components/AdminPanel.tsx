@@ -8,6 +8,8 @@ import {
   addClass, 
   addClassesBatch,
   deleteClass, 
+  restoreGradeDefaultClasses,
+  restoreFirstGradeClasses,
   addTeacher, 
   deleteTeacher, 
   deleteTeachersBatch,
@@ -75,6 +77,8 @@ interface AdminPanelProps {
   isSavingSchoolName?: boolean;
   globalProgress?: { active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string };
   setGlobalProgress?: React.Dispatch<React.SetStateAction<{ active: boolean; type: "save" | "load" | "delete" | "import" | null; label: string }>>;
+  isGoogleAuthenticated?: boolean;
+  onRequireGoogleLogin?: () => void;
 }
 
 const getTodayDateString = () => {
@@ -104,7 +108,11 @@ const normalizeArabic = (str: string): string => {
 };
 
 const getClassCode = (clsName: string) => {
-  if (!clsName) return "";
+  if (!clsName) return "ف1";
+  // If clsName is a long ID or timestamp (contains > 4 digits or ID prefixes)
+  if (typeof clsName === "string" && (clsName.length > 10 || /^\d{4,}$/.test(clsName.trim()) || clsName.startsWith("temp_") || clsName.startsWith("class_"))) {
+    return "ف1";
+  }
   let name = clsName.replace("الفصل ", "ف").trim();
   const norm = normalizeArabic(name);
   if (norm.includes(normalizeArabic("الأول"))) return "ف1";
@@ -114,25 +122,44 @@ const getClassCode = (clsName: string) => {
   if (norm.includes(normalizeArabic("الخامس"))) return "ف5";
   if (norm.includes(normalizeArabic("السادس"))) return "ف6";
   if (norm.includes(normalizeArabic("السابع"))) return "ف7";
+  if (norm.includes(normalizeArabic("الثامن"))) return "ف8";
+  if (norm.includes(normalizeArabic("التاسع"))) return "ف9";
+  if (norm.includes(normalizeArabic("العاشر"))) return "ف10";
   
-  const match = name.match(/\d+/);
+  const match = name.match(/\b([1-9]|[1-4][0-9]|50)\b/);
   if (match) return `ف${match[0]}`;
-  return name;
+  
+  const anyDigits = name.match(/\d+/);
+  if (anyDigits && anyDigits[0].length <= 2) {
+    return `ف${anyDigits[0]}`;
+  }
+  return name.length > 5 ? "ف1" : name;
 };
 
 const getPeriodNum = (code: string) => {
-  if (!code) return "";
+  if (!code) return "1";
+  if (code === "صباحي" || code === "ص" || code === "طابور") return "صباحي";
   const match = code.match(/\d+/);
   return match ? match[0] : code;
 };
 
 const getClassNum = (code: string) => {
-  if (!code) return "";
-  const match = code.match(/\d+/);
-  return match ? match[0] : code;
+  if (!code || code === "-") return "1";
+  if (typeof code === "string" && (code.length > 8 || /^\d{4,}$/.test(code.trim()) || code.startsWith("temp_") || code.startsWith("class_"))) {
+    return "1";
+  }
+  const match = code.match(/\b([1-9]|[1-4][0-9]|50)\b/);
+  if (match) return match[0];
+  const anyDigits = code.match(/\d+/);
+  if (anyDigits && anyDigits[0].length <= 2) return anyDigits[0];
+  const clean = code.replace(/^ف/, "");
+  return clean.length > 4 ? "1" : (clean || "1");
 };
 
 const getPeriodBadgeStyles = (num: string) => {
+  if (num === "صباحي" || num === "ص" || num === "طابور") {
+    return "bg-amber-100 text-amber-900 border-amber-300 font-black";
+  }
   switch (num) {
     case "1":
       return "bg-purple-100 text-purple-800 border-purple-200";
@@ -154,7 +181,8 @@ const getPeriodBadgeStyles = (num: string) => {
 };
 
 const getClassBadgeStyles = (num: string) => {
-  switch (num) {
+  const cleanNum = num ? num.replace(/\D/g, '') : "1";
+  switch (cleanNum) {
     case "1":
       return "bg-rose-100 text-rose-800 border-rose-200";
     case "2":
@@ -204,7 +232,9 @@ export default function AdminPanel({
   onSchoolNameChange,
   isSavingSchoolName = false,
   globalProgress,
-  setGlobalProgress
+  setGlobalProgress,
+  isGoogleAuthenticated = true,
+  onRequireGoogleLogin
 }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
   const [pin, setPin] = useState<string>("");
@@ -226,7 +256,7 @@ export default function AdminPanel({
   const activeSubTab = propActiveSubTab !== undefined ? propActiveSubTab : localActiveSubTab;
   const setActiveSubTab = propSetActiveSubTab !== undefined ? propSetActiveSubTab : setLocalActiveSubTab;
 
-  const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "morning_delay" | "selected_attendance" | "behavior" | "student_report">("attendance");
+  const [activeStatsTab, setActiveStatsTab] = useState<"attendance" | "morning_delay" | "selected_attendance" | "student_report">("attendance");
   const [attendanceViewMode, setAttendanceViewMode] = useState<"list" | "grid">("list");
   const [hasNewBehavior, setHasNewBehavior] = useState<boolean>(false);
   const [newBehaviorIds, setNewBehaviorIds] = useState<string[]>([]);
@@ -742,14 +772,14 @@ export default function AdminPanel({
   };
 
   // Delete Morning Delay Record from table
-  const handleDeleteMorningDelay = (delayId: string, studentName: string) => {
+  const handleDeleteMorningDelay = (delayId: string, studentName: string, studentId?: string, date?: string) => {
     confirmAction(
       "حذف تسجيل التأخر الصباحي",
       `هل أنت متأكد من حذف تسجيل تأخر الطالب (${studentName})؟`,
       async () => {
         try {
-          setMorningDelaysList(prev => prev.filter(d => d.id !== delayId));
-          await deleteMorningDelayRecord(delayId);
+          setMorningDelaysList(prev => prev.filter(d => d.id !== delayId && !(studentId && date && d.studentId === studentId && d.date === date)));
+          await deleteMorningDelayRecord(delayId, { studentId, date });
           showMessage("تم حذف تسجيل التأخر بنجاح");
         } catch (e) {
           console.error("Error deleting morning delay:", e);
@@ -813,12 +843,19 @@ export default function AdminPanel({
     }, 450);
   };
 
-  // Delete specific student absence record (Instant 0ms update + background sync)
+  // Delete specific student absence or delay record (Instant 0ms update + background sync)
   const handleDeleteAbsence = async (recordId: string, studentId: string, isAbsentType: boolean) => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     const isNoAbsenceDummy = studentId === "no-absence";
-    const title = isNoAbsenceDummy ? "حذف التحضير بالكامل" : "حذف تسجيل الغياب";
+    const isMorningDelay = recordId.startsWith("delay_") || recordId.startsWith("delay-");
+    const title = isNoAbsenceDummy ? "حذف التحضير بالكامل" : isMorningDelay ? "حذف التأخر الصباحي" : "حذف تسجيل الغياب";
     const message = isNoAbsenceDummy 
       ? "هل أنت متأكد من رغبتك في حذف سجل التحضير الكامل (حضور الجميع) لهذه الحصة؟"
+      : isMorningDelay
+      ? "هل أنت متأكد من رغبتك في حذف وإلغاء تسجيل التأخر الصباحي لهذا الطالب؟"
       : "هل أنت متأكد من رغبتك في حذف تسجيل غياب هذا الطالب من هذه الحصة؟";
 
     confirmAction(
@@ -833,7 +870,7 @@ export default function AdminPanel({
               if (!Array.isArray(list)) return [];
               return list.filter(item => {
                 if (!item) return false;
-                if (item.recordId !== recordId) return true;
+                if (item.recordId !== recordId && item.id !== recordId) return true;
                 if (isNoAbsenceDummy) return false;
                 return !(item.studentId === studentId && item.isAbsent === isAbsentType);
               });
@@ -861,14 +898,19 @@ export default function AdminPanel({
             if (!Array.isArray(prev)) return [];
             return prev.filter(item => {
               if (!item) return false;
-              if (item.recordId !== recordId) return true;
+              if (item.recordId !== recordId && item.id !== recordId) return true;
               if (isNoAbsenceDummy) return false;
               return !(item.studentId === studentId && item.isAbsent === isAbsentType);
             });
           });
 
-          // Update cached ref
-          if (Array.isArray(cachedAttendanceRef.current)) {
+          // Update cached refs
+          if (isMorningDelay) {
+            if (Array.isArray(cachedDelaysRef.current)) {
+              cachedDelaysRef.current = cachedDelaysRef.current.filter(r => r && r.id !== recordId && r.studentId !== studentId);
+            }
+            setMorningDelaysList(prev => prev.filter(r => r.id !== recordId && r.studentId !== studentId));
+          } else if (Array.isArray(cachedAttendanceRef.current)) {
             if (isNoAbsenceDummy) {
               cachedAttendanceRef.current = cachedAttendanceRef.current.filter(r => r && r.id !== recordId);
             } else {
@@ -883,23 +925,30 @@ export default function AdminPanel({
             }
           }
 
-          showMessage("تم حذف تسجيل الغياب بنجاح!");
+          showMessage(isMorningDelay ? "تم حذف تسجيل التأخر الصباحي بنجاح!" : "تم حذف تسجيل الغياب بنجاح!");
 
           // 2. Perform local-first database update and non-blocking background sync
-          if (isNoAbsenceDummy) {
+          if (isMorningDelay) {
+            await deleteMorningDelayRecord(recordId, { studentId, date: getTodayDateString() });
+          } else if (isNoAbsenceDummy) {
             await deleteAttendanceRecord(recordId);
           } else {
             await deleteAttendanceEntry(recordId, studentId, isAbsentType);
           }
         } catch (e) {
-          console.error("Error deleting absence:", e);
-          showMessage("حدث خطأ أثناء حذف الغياب", "error");
+          console.error("Error deleting absence/delay:", e);
+          showMessage("حدث خطأ أثناء الحذف", "error");
         }
       }
     );
   };
 
-  const computeStatistics = (attendance: AttendanceRecord[], behaviors: BehaviorRecord[], isBehaviorsReady: boolean = true) => {
+  const computeStatistics = (
+    attendance: AttendanceRecord[], 
+    behaviors: BehaviorRecord[], 
+    delays: MorningDelayRecord[] = cachedDelaysRef.current,
+    isBehaviorsReady: boolean = true
+  ) => {
     try {
       const safeAttendance = Array.isArray(attendance) ? attendance : [];
       const safeBehaviors = Array.isArray(behaviors) ? behaviors : [];
@@ -1133,7 +1182,27 @@ export default function AdminPanel({
         if (!cls && rec.classId) {
           cls = classes.find(c => normalizeArabic(c.name) === normalizeArabic(rec.classId));
         }
-        const className = cls?.name || rec.classId || "فصل";
+        if (!cls && rec.absent && rec.absent.length > 0) {
+          const st = students.find(s => s.id === rec.absent[0] || s.name === rec.absent[0]);
+          if (st && st.classId) {
+            cls = classes.find(c => c.id === st.classId || c.name === st.classId);
+          }
+        }
+        if (!cls && rec.late && rec.late.length > 0) {
+          const st = students.find(s => s.id === rec.late[0] || s.name === rec.late[0]);
+          if (st && st.classId) {
+            cls = classes.find(c => c.id === st.classId || c.name === st.classId);
+          }
+        }
+        
+        let className = cls?.name || "";
+        if (!className) {
+          if (rec.classId && !rec.classId.startsWith("temp_") && !rec.classId.startsWith("class_") && rec.classId.length <= 8 && !/^\d{4,}$/.test(rec.classId.trim())) {
+            className = rec.classId;
+          } else {
+            className = "الفصل 1";
+          }
+        }
         const teacherName = teachers.find(t => t.id === rec.teacherId)?.name || (rec as any).teacherName || "غير محدد";
 
         const pCode = getPeriodCode(rec.period);
@@ -1297,8 +1366,10 @@ export default function AdminPanel({
 
           const pNumAStr = getPeriodNum(a.periodCode || "");
           const pNumBStr = getPeriodNum(b.periodCode || "");
-          const periodA = parseInt(pNumAStr, 10) || 999;
-          const periodB = parseInt(pNumBStr, 10) || 999;
+          let periodA = parseInt(pNumAStr, 10);
+          let periodB = parseInt(pNumBStr, 10);
+          if (isNaN(periodA)) periodA = 999;
+          if (isNaN(periodB)) periodB = 999;
 
           if (periodA !== periodB) {
             return periodA - periodB;
@@ -1338,9 +1409,16 @@ export default function AdminPanel({
   const loadStatistics = async () => {
     setStatsLoading(true);
     try {
-      const attendance = await getAllAttendanceRecords();
-      const behaviors = await getAllBehaviorRecords();
-      computeStatistics(attendance, behaviors);
+      const [attendance, behaviors, delays] = await Promise.all([
+        getAllAttendanceRecords(),
+        getAllBehaviorRecords(),
+        getAllMorningDelayRecords()
+      ]);
+      cachedAttendanceRef.current = attendance;
+      cachedBehaviorsRef.current = behaviors;
+      cachedDelaysRef.current = delays;
+      setMorningDelaysList(delays);
+      computeStatistics(attendance, behaviors, delays);
     } catch (e) {
       console.error("Error loading stats:", e);
     } finally {
@@ -1519,6 +1597,7 @@ export default function AdminPanel({
 
   const cachedAttendanceRef = useRef<AttendanceRecord[]>([]);
   const cachedBehaviorsRef = useRef<BehaviorRecord[]>([]);
+  const cachedDelaysRef = useRef<MorningDelayRecord[]>([]);
   const behaviorsReceivedRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -1526,7 +1605,12 @@ export default function AdminPanel({
       setStatsLoading(true);
       
       const runCompute = () => {
-        computeStatistics(cachedAttendanceRef.current, cachedBehaviorsRef.current, behaviorsReceivedRef.current);
+        computeStatistics(
+          cachedAttendanceRef.current, 
+          cachedBehaviorsRef.current, 
+          cachedDelaysRef.current, 
+          behaviorsReceivedRef.current
+        );
         setStatsLoading(false);
       };
 
@@ -1553,9 +1637,13 @@ export default function AdminPanel({
 
       const unsubDelays = subscribeToAllMorningDelayRecords(
         (records) => {
+          cachedDelaysRef.current = records;
           setMorningDelaysList(records);
+          runCompute();
         },
-        (_error) => {}
+        (_error) => {
+          runCompute();
+        }
       );
 
       return () => {
@@ -1568,14 +1656,23 @@ export default function AdminPanel({
 
   // Re-compute stats when students, classes, grades, or activeSubTab change
   useEffect(() => {
-    if ((isAuthenticated || isReadOnly) && cachedAttendanceRef.current.length > 0) {
-      computeStatistics(cachedAttendanceRef.current, cachedBehaviorsRef.current, behaviorsReceivedRef.current);
+    if (isAuthenticated || isReadOnly) {
+      computeStatistics(
+        cachedAttendanceRef.current, 
+        cachedBehaviorsRef.current, 
+        cachedDelaysRef.current, 
+        behaviorsReceivedRef.current
+      );
     }
   }, [students, classes, grades, activeSubTab]);
 
   // --- CRUD HANDLERS (Grades & Classes) ---
   const handleAddGradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     const gradeLines = newGradeName
       .split("\n")
       .map(line => line.trim())
@@ -1675,6 +1772,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteGrade = (id: string, name: string) => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     confirmAction(
       "حذف الصف الدراسي",
       `هل أنت متأكد من حذف ${name}؟ سيتم حذف جميع الفصول والطلاب التابعين له تلقائياً ولا يمكن التراجع عن هذا الإجراء.`,
@@ -1700,6 +1801,10 @@ export default function AdminPanel({
 
   // Automated/Sequence Class Adding (matching screenshot functionality)
   const handleAddClassSequence = async () => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (!selectedGradeIdForClasses) {
       showMessage("الرجاء اختيار صف دراسي أولاً لتثبيت الفصول عليه", "error");
       return;
@@ -1747,6 +1852,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteClass = (id: string, name: string) => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     confirmAction(
       "حذف الفصل الدراسي",
       `هل أنت متأكد من حذف فصل ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
@@ -1766,6 +1875,10 @@ export default function AdminPanel({
   // --- CRUD HANDLERS (Teachers) ---
   const handleAddTeacherSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     const trimmedName = newTeacherName.trim();
     if (!trimmedName) return;
 
@@ -1798,6 +1911,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteTeacher = (id: string, name: string) => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     confirmAction(
       "حذف المعلم",
       `هل أنت متأكد من حذف المعلم ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
@@ -1817,6 +1934,10 @@ export default function AdminPanel({
   // --- CRUD HANDLERS (Students) ---
   const handleAddStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     const trimmedName = newStudentName.trim();
     if (!trimmedName || !newStudentGradeId || !newStudentClassId) {
       showMessage("يرجى إدخال اسم الطالب واختيار الصف والفصل", "error");
@@ -1857,6 +1978,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteStudent = (id: string, name: string) => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     confirmAction(
       "حذف الطالب",
       `هل أنت متأكد من حذف الطالب ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
@@ -1874,6 +1999,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteSelectedStudents = () => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (selectedStudentIds.length === 0) return;
     confirmAction(
       "حذف الطلاب المحددين",
@@ -1893,6 +2022,10 @@ export default function AdminPanel({
   };
 
   const handleDeleteSelectedTeachers = () => {
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (selectedTeacherIds.length === 0) return;
     confirmAction(
       "حذف المعلمين المحددين",
@@ -1934,6 +2067,10 @@ export default function AdminPanel({
 
   const handleStudentImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (!newStudentGradeId || !newStudentClassId || parsedStudentNames.length === 0) {
       showMessage("يرجى التأكد من اختيار الصف والفصل ولصق أسماء الطلاب", "error");
       return;
@@ -2062,6 +2199,10 @@ export default function AdminPanel({
 
   const handleTeacherImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (parsedTeacherNames.length === 0) {
       showMessage("يرجى لصق أسماء المعلمين أولاً", "error");
       return;
@@ -2170,6 +2311,10 @@ export default function AdminPanel({
 
   const handleGradesImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoogleAuthenticated) {
+      onRequireGoogleLogin?.();
+      return;
+    }
     if (parsedGradesStructure.length === 0) {
       showMessage("يرجى إرفاق ملف الهيكل الأكاديمي المرفق أولاً", "error");
       return;
@@ -2311,47 +2456,13 @@ export default function AdminPanel({
             <div className="flex items-center gap-2">
               <span className="text-base">📋</span>
               <h2 className="text-sm md:text-base font-black text-indigo-950">
-                {schoolName ? `متابعة الغياب والسلوك - ${schoolName}` : "متابعة الغياب والسلوك"}
+                {schoolName ? `متابعة الغياب والنسب - ${schoolName}` : "متابعة الغياب والنسب"}
               </h2>
             </div>
             <span className="text-xs font-bold text-indigo-600/90 bg-white/80 border border-indigo-100 px-3 py-1 rounded-lg shadow-3xs">
-              {schoolName ? `منصة ${schoolName} لرصد ومتابعة الغياب والسلوك` : "منصة رصد ومتابعة الغياب والسلوك للطلاب"}
+              {schoolName ? `منصة ${schoolName} لرصد ومتابعة الغياب` : "منصة رصد ومتابعة الغياب للطلاب"}
             </span>
           </div>
-
-          {/* Alert Banner for New Behaviors */}
-          {(hasNewBehavior || newBehaviorIds.length > 0) && activeStatsTab !== "behavior" && (
-            <div 
-              dir="rtl" 
-              className="bg-gradient-to-r from-amber-500 via-rose-500 to-amber-600 text-white p-3.5 rounded-xl shadow-md flex flex-wrap items-center justify-between gap-3 animate-pulse border-2 border-amber-300 ring-4 ring-amber-400/30 print:hidden cursor-pointer hover:brightness-105 transition-all"
-              onClick={handleOpenBehaviorTab}
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl animate-bounce">🔔</span>
-                <div>
-                  <p className="text-xs font-black flex items-center gap-2">
-                    <span>تنبيه: قائمة أسماء وملاحظات جديدة!</span>
-                    <span className="bg-white text-rose-700 text-[10px] font-black px-2 py-0.5 rounded-full shadow-2xs">
-                      {newBehaviorIds.length > 0 ? `${newBehaviorIds.length} اسم جديد` : "تم رصد مخالفة جديدة"}
-                    </span>
-                  </p>
-                  <p className="text-[11px] font-extrabold text-amber-50 mt-0.5">
-                    تم رصد ملاحظات أسماء جديدة في قائمة السلوكيات من المعلمين. اضغط هنا للانتقال مباشرة لقائمة الأسماء الجديدة.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleOpenBehaviorTab();
-                }}
-                className="bg-white text-amber-950 hover:bg-amber-50 font-black text-xs px-3.5 py-1.5 rounded-lg shadow-sm border border-amber-200 shrink-0 transition cursor-pointer"
-              >
-                استعراض الأسماء والسلوكيات 👈
-              </button>
-            </div>
-          )}
 
           {/* Sub-navigation Tabs & Print bar */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white p-2 rounded-xl border border-slate-100 shadow-3xs print:hidden">
@@ -2397,24 +2508,6 @@ export default function AdminPanel({
               >
                 <span>🔍</span>
                 <span>غياب محدد</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenBehaviorTab}
-                className={`relative px-3 py-1.5 rounded-md text-[11px] font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer ${
-                  activeStatsTab === "behavior"
-                    ? "bg-white text-amber-700 shadow-3xs border border-slate-200/50"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
-              >
-                <span>📝</span>
-                <span>السلوك</span>
-                {(hasNewBehavior || newBehaviorIds.length > 0) && activeStatsTab !== "behavior" && (
-                  <span className="inline-flex items-center gap-1 bg-gradient-to-r from-rose-500 to-red-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full animate-pulse shadow-2xs border border-rose-300/40">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                    <span>جديد {newBehaviorIds.length > 0 ? `(${newBehaviorIds.length})` : ""}</span>
-                  </span>
-                )}
               </button>
               <button
                 type="button"
@@ -2467,69 +2560,6 @@ export default function AdminPanel({
               </button>
             </div>
           </div>
-
-          {/* Distinctive empty state warning window with motion effects */}
-          {isReadOnly && (classes.length === 0 && grades.length === 0) && (
-            <motion.div
-              initial={{ opacity: 0, y: 15, scale: 0.95 }}
-              animate={{ 
-                opacity: 1, 
-                y: 0, 
-                scale: 1,
-                boxShadow: [
-                  "0px 4px 12px rgba(245, 158, 11, 0.1)",
-                  "0px 4px 24px rgba(245, 158, 11, 0.25)",
-                  "0px 4px 12px rgba(245, 158, 11, 0.1)"
-                ]
-              }}
-              transition={{ 
-                duration: 0.7,
-                ease: "easeOut",
-                boxShadow: {
-                  repeat: Infinity,
-                  duration: 2.5,
-                  ease: "easeInOut"
-                }
-              }}
-              className="relative overflow-hidden bg-gradient-to-r from-amber-500/10 via-rose-500/5 to-amber-500/10 border-2 border-dashed border-amber-500/40 rounded-2xl p-6 md:p-8 text-center shadow-lg my-2"
-              dir="rtl"
-            >
-              {/* Glowing ambient blobs in the background */}
-              <div className="absolute -top-12 -left-12 w-36 h-36 bg-amber-400/15 rounded-full blur-2xl animate-pulse"></div>
-              <div className="absolute -bottom-12 -right-12 w-36 h-36 bg-rose-400/15 rounded-full blur-2xl animate-pulse"></div>
-              
-              <div className="flex flex-col items-center justify-center gap-4 relative z-10">
-                <motion.div 
-                  animate={{ 
-                    scale: [1, 1.15, 1],
-                    rotate: [0, 4, -4, 0]
-                  }}
-                  transition={{ 
-                    repeat: Infinity, 
-                    duration: 3,
-                    ease: "easeInOut"
-                  }}
-                  className="bg-gradient-to-br from-amber-500 to-rose-500 text-white p-4 rounded-2xl shadow-md shadow-amber-500/25 border border-amber-300/30"
-                >
-                  <Users className="w-7 h-7" />
-                </motion.div>
-                
-                <div className="space-y-2">
-                  <h4 className="text-sm md:text-base font-black text-amber-800 dark:text-amber-400 tracking-tight leading-tight">
-                    بانتظار المسؤول اضافة الفصول والطلاب
-                  </h4>
-                  <p className="text-[10px] md:text-xs text-slate-500 dark:text-slate-400 font-extrabold max-w-lg mx-auto leading-relaxed">
-                    يرجى من إدارة المدرسة تهيئة الهيكل الأكاديمي أولاً عن طريق تبويب الطلاب، لإضافة الصفوف، الفصول، وتغذية أسماء الطلاب لتفعيل كافة الإحصائيات الذكية والتقارير اليومية وتلوينها هنا تلقائياً.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                  <span className="text-[9px] text-amber-600 font-black uppercase tracking-wider">بانتظار التهيئة الأكاديمية</span>
-                </div>
-              </div>
-            </motion.div>
-          )}
 
           {/* TAB CONTENT: DAILY ATTENDANCE (DYNAMIC COLUMNS / LIST FOR ALL GRADES) */}
           {activeStatsTab === "attendance" && (
@@ -2633,6 +2663,15 @@ export default function AdminPanel({
                                         >
                                           {entry.studentName}
                                         </span>
+                                      ) : entry.isMorningDelay ? (
+                                        <div className="flex items-center gap-1">
+                                          <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[8.5px] font-black px-1 py-0.2 rounded shrink-0">
+                                            تأخر صباحي
+                                          </span>
+                                          <span className="font-bold text-slate-900 text-[10px] whitespace-nowrap block" title={entry.studentName}>
+                                            {entry.studentName}
+                                          </span>
+                                        </div>
                                       ) : entry.isLate ? (
                                         <div className="flex items-center gap-1">
                                           <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[8.5px] font-black px-1 py-0.2 rounded shrink-0">
@@ -2705,6 +2744,11 @@ export default function AdminPanel({
                                   <div className="font-black text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
                                     {entry.isNoAbsenceDummy ? (
                                       <span className="text-emerald-700">{entry.studentName}</span>
+                                    ) : entry.isMorningDelay ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="bg-amber-200/80 text-amber-900 text-[9.5px] font-black px-1.5 py-0.2 rounded">تأخر صباحي</span>
+                                        <span>{entry.studentName}</span>
+                                      </div>
                                     ) : entry.isLate ? (
                                       <div className="flex items-center gap-1.5">
                                         <span className="bg-amber-200/80 text-amber-900 text-[9.5px] font-black px-1.5 py-0.2 rounded">متأخر</span>
@@ -2781,14 +2825,10 @@ export default function AdminPanel({
                   <div>
                     <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
                       <span className="p-1.5 bg-amber-500 text-white rounded-lg text-xs">⏰</span>
-                      <span>سجل الطلاب المتأخرين صباحاً</span>
                       <span className="bg-amber-100 text-amber-900 text-xs font-black px-2.5 py-0.5 rounded-full border border-amber-200">
                         {filteredDelays.length} حالة تأخر
                       </span>
                     </h3>
-                    <p className="text-2xs text-slate-400 font-bold mt-1">
-                      كشف شامل لجميع الطلاب المتأخرين عن الطابور الصباحي والحصة الأولى مع الأوقات والأسباب.
-                    </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -3033,7 +3073,7 @@ export default function AdminPanel({
                                 <td className="py-2.5 px-3 text-center">
                                   <button
                                     type="button"
-                                    onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName)}
+                                    onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName, entry.studentId, entry.date)}
                                     className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
                                     title="حذف هذا التسجيل"
                                   >
@@ -3075,7 +3115,7 @@ export default function AdminPanel({
                             {!isReadOnly && (
                               <button
                                 type="button"
-                                onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName)}
+                                onClick={() => handleDeleteMorningDelay(entry.id, entry.studentName, entry.studentId, entry.date)}
                                 className="text-slate-400 hover:text-rose-600 p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg active:bg-rose-50"
                                 title="حذف هذا التسجيل"
                               >
@@ -3267,230 +3307,6 @@ export default function AdminPanel({
             </div>
           )}
 
-          {/* TAB CONTENT: ALL BEHAVIORS (السلوك) */}
-          {activeStatsTab === "behavior" && (() => {
-            let displayedBehaviors = stats.allBehaviorsList || [];
-
-            if (behaviorDateFilter === "new_only") {
-              displayedBehaviors = displayedBehaviors.filter(b => newBehaviorIds.includes(b.id));
-            } else if (behaviorDateFilter === "today") {
-              displayedBehaviors = displayedBehaviors.filter(b => b.date === getTodayDateString());
-            } else if (behaviorDateFilter !== "all" && behaviorDateFilter) {
-              displayedBehaviors = displayedBehaviors.filter(b => b.date === behaviorDateFilter);
-            }
-
-            if (behaviorSearchFilter.trim()) {
-              const query = behaviorSearchFilter.trim().toLowerCase();
-              displayedBehaviors = displayedBehaviors.filter(b => 
-                (b.studentName || "").toLowerCase().includes(query) ||
-                (b.violation || "").toLowerCase().includes(query) ||
-                (b.teacherName || "").toLowerCase().includes(query) ||
-                (b.gradeName || "").toLowerCase().includes(query) ||
-                (b.className || "").toLowerCase().includes(query)
-              );
-            }
-
-            return (
-              <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn">
-                <div className="border-b border-slate-100 pb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <div>
-                    <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 flex-wrap">
-                      <span>📝</span>
-                      <span>سجل المخالفات والسلوكيات (لكافة الأيام)</span>
-                      {newBehaviorIds.length > 0 && (
-                        <span className="bg-gradient-to-r from-rose-500 to-amber-500 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full animate-pulse shadow-2xs border border-rose-300/50 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                          <span>قائمة الأسماء الجديدة ({newBehaviorIds.length})</span>
-                        </span>
-                      )}
-                    </h3>
-                    <p className="text-2xs text-slate-400 font-bold mt-0.5">
-                      استعراض كافة الملاحظات والمخالفات السلوكية المرصودة لجميع الأيام (الأحدث في الأعلى).
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-amber-50 text-amber-700 text-3xs font-extrabold px-3 py-1.5 rounded-xl border border-amber-150 flex items-center gap-1">
-                      <span>📊</span>
-                      <span>إجمالي السلوكيات: {stats.allBehaviorsList.length}</span>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Filter and Search Bar */}
-                <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-50/70 p-3 rounded-xl border border-slate-100">
-                  <div className="relative w-full md:w-72">
-                    <input
-                      type="text"
-                      value={behaviorSearchFilter}
-                      onChange={(e) => setBehaviorSearchFilter(e.target.value)}
-                      placeholder="بحث باسم الطالب، المخالفة، المعلم..."
-                      className="w-full bg-white border border-slate-200 text-slate-800 text-xs rounded-xl py-2 pr-9 pl-3 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold placeholder:text-slate-400"
-                    />
-                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-                    {newBehaviorIds.length > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setBehaviorDateFilter(behaviorDateFilter === "new_only" ? "all" : "new_only")}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs border ${
-                            behaviorDateFilter === "new_only"
-                              ? "bg-rose-600 text-white border-rose-700 ring-2 ring-rose-400/50"
-                              : "bg-gradient-to-r from-amber-500 via-rose-500 to-amber-600 text-white border-amber-300 animate-pulse hover:brightness-105"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
-                          <span>🔔 قائمة الأسماء الجديدة ({newBehaviorIds.length})</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleClearNewBehaviorAlerts}
-                          className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer border border-slate-200 flex items-center gap-1 shadow-2xs"
-                          title="تعليم كافة الأسماء كتم الاطلاع ومسح التنبيهات"
-                        >
-                          <span>✓</span>
-                          <span>تأكيد الاطلاع ومسح التنبيه</span>
-                        </button>
-                      </>
-                    )}
-
-                    <span className="text-2xs font-extrabold text-slate-500">التاريخ:</span>
-                    <select
-                      value={behaviorDateFilter}
-                      onChange={(e) => setBehaviorDateFilter(e.target.value)}
-                      className="bg-white border border-slate-200 text-slate-700 text-xs rounded-xl py-2 px-3 font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    >
-                      <option value="all">كافة الأيام (الكل)</option>
-                      <option value="today">اليوم فقط ({getTodayDateString()})</option>
-                      {newBehaviorIds.length > 0 && (
-                        <option value="new_only">🔔 قائمة الأسماء الجديدة ({newBehaviorIds.length})</option>
-                      )}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="border border-slate-100 rounded-xl overflow-hidden">
-                  <table className="w-full text-right text-xs" dir="rtl">
-                    <thead className="bg-slate-50 text-slate-500 font-extrabold text-[11px] border-b border-slate-100">
-                      <tr>
-                        <th className="py-2.5 px-4 text-right">رقم</th>
-                        <th className="py-2.5 px-4 text-right">
-                          <div className="flex items-center gap-1.5">
-                            <span>اسم الطالب</span>
-                            {newBehaviorIds.length > 0 && (
-                              <span className="inline-flex items-center gap-1 text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full text-[10px] font-black animate-pulse">
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping"></span>
-                                <span>جديد 🔔</span>
-                              </span>
-                            )}
-                          </div>
-                        </th>
-                        <th className="py-2.5 px-4 text-right">الصف / الفصل</th>
-                        <th className="py-2.5 px-4 text-right">المخالفة / الملاحظة</th>
-                        <th className="py-2.5 px-4 text-right">التاريخ والحصة</th>
-                        <th className="py-2.5 px-4 text-right">المعلم المعتمد</th>
-                        {!isReadOnly && <th className="py-2.5 px-2 text-center">⚙️</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {displayedBehaviors.length === 0 ? (
-                        <tr>
-                          <td colSpan={isReadOnly ? 6 : 7} className="py-12 text-center text-slate-400 font-extrabold">
-                            لا توجد مخالفات سلوكية مرصودة مطابقة للبحث 👍
-                          </td>
-                        </tr>
-                      ) : (
-                        displayedBehaviors.map((log, index) => {
-                          const isNew = newBehaviorIds.includes(log.id);
-                          const isToday = log.date === getTodayDateString();
-                          return (
-                            <tr 
-                              key={log.id || index} 
-                              className={`transition-all duration-300 ${
-                                isNew 
-                                  ? "bg-amber-100/90 ring-2 ring-amber-400/90 animate-pulse font-extrabold shadow-2xs" 
-                                  : "hover:bg-slate-50/50"
-                              }`}
-                            >
-                              <td className="py-3 px-4 font-bold text-slate-400">{index + 1}</td>
-                              <td className="py-3 px-4 font-extrabold text-slate-800 flex items-center gap-2">
-                                <span className={isNew ? "text-amber-950 font-black text-sm animate-pulse" : ""}>{log.studentName}</span>
-                                {isNew && (
-                                  <span className="inline-flex items-center gap-1 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded-full animate-bounce shadow-sm border border-rose-300">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                                    <span>طالب جديد 🔔</span>
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 font-bold text-slate-600">{log.gradeName} - {log.className}</td>
-                              <td className="py-3 px-4">
-                                <span className="text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100 font-extrabold text-3xs">
-                                  {log.violation}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 font-bold text-slate-600">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-slate-700">{log.date}</span>
-                                  {log.period && <span className="text-slate-400 text-3xs">({log.period})</span>}
-                                  {isToday && (
-                                    <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-1.5 py-0.5 rounded-full">اليوم</span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 text-slate-800 font-extrabold flex items-center gap-1.5">
-                                <span className="text-slate-400 text-3xs">👨‍🏫</span>
-                                <span>{log.teacherName}</span>
-                              </td>
-                              {!isReadOnly && (
-                                <td className="py-3 px-2 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      confirmAction(
-                                        "حذف المخالفة السلوكية",
-                                        "هل أنت متأكد من حذف هذه الملاحظة السلوكية؟ لا يمكن التراجع عن هذا الإجراء.",
-                                        async () => {
-                                          try {
-                                            // Optimistic UI state update (0ms)
-                                            setStats(prev => {
-                                              if (!prev) return prev;
-                                              return {
-                                                ...prev,
-                                                allBehaviorsList: (prev.allBehaviorsList || []).filter(b => b.id !== log.id),
-                                                todayBehaviorsList: (prev.todayBehaviorsList || []).filter(b => b.id !== log.id),
-                                                totalBehaviors: Math.max(0, (prev.totalBehaviors || 0) - 1),
-                                                todayBehaviors: Math.max(0, (prev.todayBehaviors || 0) - (log.date === getTodayDateString() ? 1 : 0))
-                                              };
-                                            });
-                                            showMessage("تم حذف السلوك بنجاح!");
-                                            await deleteBehaviorRecord(log.id);
-                                          } catch (e) {
-                                            console.error("Error deleting behavior record:", e);
-                                            showMessage("حدث خطأ أثناء حذف السلوك", "error");
-                                          }
-                                        }
-                                      );
-                                    }}
-                                    className="text-rose-400 hover:text-rose-600 p-1 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                                    title="حذف هذا السلوك"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </td>
-                              )}
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })()}
-
           {/* TAB CONTENT: STUDENT DETAILED REPORT (تقرير الطالب) */}
           {activeStatsTab === "student_report" && (
             <div className="bg-white rounded-2xl shadow-3xs border border-slate-100 p-5 space-y-5 animate-fadeIn">
@@ -3499,7 +3315,7 @@ export default function AdminPanel({
                   <span>📋</span>
                   <span>تقرير الطالب التفصيلي والطباعة</span>
                 </h3>
-                <p className="text-2xs text-slate-400 font-bold mt-0.5">اختر الطالب لاستخراج السيرة السلوكية ونسب الغياب والتأخر في كافة الحصص بنظام بنتو وبطريقة قابلة للطباعة.</p>
+                <p className="text-2xs text-slate-400 font-bold mt-0.5">اختر الطالب لاستخراج نسب الغياب والتأخر في كافة الحصص بنظام بنتو وبطريقة قابلة للطباعة.</p>
               </div>
 
               {/* Selection Dropdowns */}
@@ -3577,7 +3393,7 @@ export default function AdminPanel({
                   </div>
 
                   {/* Bento Metrics Grid */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     {/* Attendance rate card */}
                     <div className="bg-gradient-to-tr from-blue-50/50 to-indigo-50/50 border border-blue-100 rounded-2xl p-4 text-center flex flex-col justify-between">
                       <span className="text-3xs text-blue-600 font-extrabold mb-2 block">نسبة الانضباط والحضور</span>
@@ -3602,71 +3418,35 @@ export default function AdminPanel({
                       <span className="text-3xl font-black text-amber-500 my-auto">{studentReportData.lateCount}</span>
                       <span className="text-3xs text-amber-600 font-bold block mt-2 bg-amber-50/50 py-1 rounded-lg">حالة تأخر مرصودة</span>
                     </div>
-
-                    {/* Behaviors Count Card */}
-                    <div className="bg-white border border-slate-150 rounded-2xl p-4 text-center flex flex-col justify-between shadow-3xs">
-                      <span className="text-3xs text-slate-400 font-extrabold mb-2 block">المخالفات السلوكية</span>
-                      <span className="text-3xl font-black text-violet-600 my-auto">{studentReportData.behaviors.length}</span>
-                      <span className="text-3xs text-violet-600 font-bold block mt-2 bg-violet-50/50 py-1 rounded-lg">ملاحظة مسجلة</span>
-                    </div>
                   </div>
 
-                  {/* Two columns: History Logs vs Behaviors list */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                  {/* Attendance logs */}
+                  <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-3 pt-2">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 border-b border-slate-50 pb-2">
+                      <span>📕</span>
+                      <span>سجل الانضباط والحصص التفصيلي</span>
+                    </h4>
                     
-                    {/* Column A: Attendance logs */}
-                    <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-3">
-                      <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 border-b border-slate-50 pb-2">
-                        <span>📕</span>
-                        <span>سجل الانضباط والحصص التفصيلي</span>
-                      </h4>
-                      
-                      <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
-                        {studentReportData.history.length === 0 ? (
-                          <p className="text-xs text-slate-400 text-center py-10 font-bold">السجل نظيف! الطالب حاضر دائماً 👍</p>
-                        ) : (
-                          studentReportData.history.map((log, idx) => (
-                            <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                              <div className="text-right">
-                                <p className="text-[11px] font-extrabold text-slate-800">حصة {log.period}</p>
-                                <p className="text-[9px] text-slate-400 font-semibold">بواسطة: {log.teacher}</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-3xs text-slate-400 font-bold">{log.date}</span>
-                                <span className={`px-2 py-0.5 rounded-lg text-3xs font-black ${
-                                  log.status === "غائب" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
-                                }`}>{log.status}</span>
-                              </div>
+                    <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                      {studentReportData.history.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-10 font-bold">السجل نظيف! الطالب حاضر دائماً 👍</p>
+                      ) : (
+                        studentReportData.history.map((log, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                            <div className="text-right">
+                              <p className="text-[11px] font-extrabold text-slate-800">حصة {log.period}</p>
+                              <p className="text-[9px] text-slate-400 font-semibold">بواسطة: {log.teacher}</p>
                             </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Column B: Behaviors list */}
-                    <div className="bg-white border border-slate-100 rounded-2xl p-5 space-y-3">
-                      <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5 border-b border-slate-50 pb-2">
-                        <span>📝</span>
-                        <span>سجل الملاحظات السلوكية المرصودة</span>
-                      </h4>
-
-                      <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
-                        {studentReportData.behaviors.length === 0 ? (
-                          <p className="text-xs text-slate-400 text-center py-10 font-bold">السجل نظيف! سلوك الطالب مثالي وجميل 🌟</p>
-                        ) : (
-                          studentReportData.behaviors.map((b, idx) => (
-                            <div key={idx} className="p-3 rounded-xl bg-violet-50/50 border border-violet-100 space-y-1.5">
-                              <p className="text-[11px] font-black text-violet-800 leading-relaxed">{b.violation}</p>
-                              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold pt-1 border-t border-violet-100/40">
-                                <span>بتاريخ: {b.date}</span>
-                                <span>المعلم: معتمد</span>
-                              </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-3xs text-slate-400 font-bold">{log.date}</span>
+                              <span className={`px-2 py-0.5 rounded-lg text-3xs font-black ${
+                                log.status === "غائب" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"
+                              }`}>{log.status}</span>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          </div>
+                        ))
+                      )}
                     </div>
-
                   </div>
                 </div>
               ) : (
@@ -3782,13 +3562,66 @@ export default function AdminPanel({
               </div>
 
               {/* Available Grades Header */}
-              <div className="flex items-center justify-between px-1">
+              <div className="flex items-center justify-between px-1 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <Layers className="w-4.5 h-4.5 text-indigo-600" />
                   <h3 className="text-sm font-black text-slate-800">
                     الصفوف الدراسية المتاحة ({grades.length})
                   </h3>
                 </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (setGlobalProgress) {
+                      setGlobalProgress({ active: true, type: "sync", label: "جاري استرجاع فصول الصف الأول..." });
+                    }
+                    try {
+                      let firstGrade = grades.find(g => {
+                        const norm = (g.name || "").trim().toLowerCase();
+                        return norm.includes("اول") || norm.includes("أول") || norm.includes("1");
+                      }) || grades[0];
+
+                      let targetGradeId = firstGrade?.id;
+                      if (!targetGradeId) {
+                        targetGradeId = await addGrade("الصف الأول");
+                        const newGrade = { id: targetGradeId, name: "الصف الأول" };
+                        setGrades(prev => [...prev, newGrade]);
+                      }
+                      
+                      const needed = [1, 2, 3, 4, 5, 6];
+                      const toAdd: { name: string; gradeId: string }[] = [];
+                      needed.forEach(num => {
+                        toAdd.push({ name: `الفصل ${num}`, gradeId: targetGradeId! });
+                      });
+                      
+                      const tempItems = toAdd.map(item => ({
+                        id: `temp_cls_${Date.now()}_${item.name}`,
+                        name: item.name,
+                        gradeId: targetGradeId!
+                      }));
+                      setClasses(prev => [...prev, ...tempItems]);
+                      
+                      const res = await addClassesBatch(toAdd);
+                      setClasses(prev => {
+                        const tempIds = new Set(tempItems.map(t => t.id));
+                        const clean = prev.filter(p => !tempIds.has(p.id));
+                        return [...clean, ...res];
+                      });
+                      
+                      if (setGlobalProgress) {
+                        setGlobalProgress({ active: false, type: null, label: "" });
+                      }
+                    } catch (e) {
+                      if (setGlobalProgress) {
+                        setGlobalProgress({ active: false, type: null, label: "" });
+                      }
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                >
+                  <span>🔄</span>
+                  <span>استرجاع فصول الصف الأول (1-6)</span>
+                </button>
               </div>
 
               {grades.length > 0 && classes.length === 0 && (
@@ -3855,7 +3688,38 @@ export default function AdminPanel({
                                 فصول الصف (اضغط على الرقم للإضافة أو الحذف):
                               </p>
                               {/* Quick selection presets */}
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const needed = [1, 2, 3, 4, 5, 6];
+                                    const toAdd: { name: string; gradeId: string }[] = [];
+                                    needed.forEach(num => {
+                                      const cName = `الفصل ${num}`;
+                                      if (!gradeClasses.some(c => c.name?.trim() === cName || c.name?.trim() === `${num}`)) {
+                                        toAdd.push({ name: cName, gradeId: grade.id });
+                                      }
+                                    });
+                                    if (toAdd.length > 0) {
+                                      const tempItems = toAdd.map(item => ({
+                                        id: `temp_cls_${Date.now()}_${item.name}`,
+                                        name: item.name,
+                                        gradeId: grade.id
+                                      }));
+                                      setClasses(prev => [...prev, ...tempItems]);
+                                      const res = await addClassesBatch(toAdd);
+                                      setClasses(prev => {
+                                        const tempIds = new Set(tempItems.map(t => t.id));
+                                        const clean = prev.filter(p => !tempIds.has(p.id));
+                                        return [...clean, ...res];
+                                      });
+                                    }
+                                  }}
+                                  className="text-[10px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-md border border-emerald-200 transition cursor-pointer"
+                                  title="استرجاع أو إضافة الفصول من 1 إلى 6 فوراً"
+                                >
+                                  + استرجاع (1-6)
+                                </button>
                                 <button
                                   type="button"
                                   onClick={async () => {
@@ -3921,9 +3785,28 @@ export default function AdminPanel({
                               </div>
                             </div>
                             {gradeClasses.length === 0 && (
-                              <span className="bg-amber-400 text-slate-900 text-[10px] px-2.5 py-0.5 rounded-md font-black shadow-2xs">
-                                اضغط على رقم الفصل لإضافته للصف 👈
-                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const needed = [1, 2, 3, 4, 5, 6];
+                                  const toAdd = needed.map(num => ({ name: `الفصل ${num}`, gradeId: grade.id }));
+                                  const tempItems = toAdd.map(item => ({
+                                    id: `temp_cls_${Date.now()}_${item.name}`,
+                                    name: item.name,
+                                    gradeId: grade.id
+                                  }));
+                                  setClasses(prev => [...prev, ...tempItems]);
+                                  const res = await addClassesBatch(toAdd);
+                                  setClasses(prev => {
+                                    const tempIds = new Set(tempItems.map(t => t.id));
+                                    const clean = prev.filter(p => !tempIds.has(p.id));
+                                    return [...clean, ...res];
+                                  });
+                                }}
+                                className="bg-amber-400 hover:bg-amber-500 text-slate-900 text-[11px] px-3 py-1 rounded-lg font-black shadow-2xs cursor-pointer transition flex items-center gap-1"
+                              >
+                                <span>⚠️ فصول هذا الصف فارغة — اضغط هنا لاسترجاع الفصول (1-6) فوراً 👈</span>
+                              </button>
                             )}
                           </div>
 

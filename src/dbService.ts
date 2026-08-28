@@ -26,117 +26,43 @@ const userProfileAliasCache = new Map<string, { uid: string; email: string; scho
 
 export function setActiveUser(user: any) {
   activeUserProxy = user;
-  if (user?.uid && user?.email) {
-    userProfileAliasCache.set(user.uid.toLowerCase(), { uid: user.uid, email: user.email.toLowerCase(), schoolName: user.displayName });
-    userProfileAliasCache.set(user.email.toLowerCase(), { uid: user.uid, email: user.email.toLowerCase(), schoolName: user.displayName });
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem(`user_alias_${user.uid.toLowerCase()}`, JSON.stringify({ uid: user.uid, email: user.email.toLowerCase() }));
-        localStorage.setItem(`user_alias_${user.email.toLowerCase()}`, JSON.stringify({ uid: user.uid, email: user.email.toLowerCase() }));
-      } catch (e) {}
+  if (user?.uid || user?.email) {
+    const uUid = (user?.uid || "").trim();
+    const uEmail = (user?.email || "").toLowerCase().trim();
+    const dName = user?.displayName || "";
+    if (uUid) {
+      userProfileAliasCache.set(uUid.toLowerCase(), { uid: uUid, email: uEmail, schoolName: dName });
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(`user_alias_${uUid.toLowerCase()}`, JSON.stringify({ uid: uUid, email: uEmail, schoolName: dName }));
+        } catch (e) {}
+      }
+    }
+    if (uEmail) {
+      userProfileAliasCache.set(uEmail.toLowerCase(), { uid: uUid, email: uEmail, schoolName: dName });
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(`user_alias_${uEmail.toLowerCase()}`, JSON.stringify({ uid: uUid, email: uEmail, schoolName: dName }));
+        } catch (e) {}
+      }
     }
   }
 }
 
 /**
- * Resolves the effective UID and Email from URL parameters, Firebase auth, or active session.
+ * Resolves the effective UID and Email from Firebase auth or active proxy / URL params.
+ * If logged in via Google Auth, uses the Google user.
+ * If accessed via direct link with owner/email in URL, uses the linked owner credentials.
+ * If unauthenticated with no link params, returns empty credentials.
  */
 export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest?: boolean } {
-  let ownerParam: string | null = null;
-  let emailParam: string | null = null;
-  let schoolParam: string | null = null;
-
-  if (typeof window !== "undefined") {
-    // 1. Check window.location.search
-    const urlParams = new URLSearchParams(window.location.search);
-    ownerParam = urlParams.get("owner") || urlParams.get("ownerId") || urlParams.get("uid");
-    emailParam = urlParams.get("email") || urlParams.get("ownerEmail") || urlParams.get("userEmail");
-    schoolParam = urlParams.get("school") || urlParams.get("schoolName");
-
-    // 2. Check window.location.hash for query params
-    if ((!ownerParam || !emailParam) && window.location.hash.includes("?")) {
-      const hashIndex = window.location.hash.indexOf("?");
-      const hashParams = new URLSearchParams(window.location.hash.substring(hashIndex));
-      if (!ownerParam) ownerParam = hashParams.get("owner") || hashParams.get("ownerId") || hashParams.get("uid");
-      if (!emailParam) emailParam = hashParams.get("email") || hashParams.get("ownerEmail") || hashParams.get("userEmail");
-      if (!schoolParam) schoolParam = hashParams.get("school") || hashParams.get("schoolName");
-    }
-  }
-
-  if (ownerParam || emailParam) {
-    const rawOwner = ownerParam ? decodeURIComponent(ownerParam).trim() : "";
-    const rawEmail = emailParam ? decodeURIComponent(emailParam).trim().toLowerCase() : "";
-
-    const isOwnerMyself = !!(firebaseAuth.currentUser && (
-      (rawOwner && firebaseAuth.currentUser.uid === rawOwner) ||
-      (rawEmail && firebaseAuth.currentUser.email?.toLowerCase() === rawEmail)
-    ));
-
-    // Try resolving from alias cache or localStorage
-    let cachedAlias: { uid: string; email: string } | null = null;
-    if (rawOwner) {
-      cachedAlias = userProfileAliasCache.get(rawOwner.toLowerCase()) || null;
-      if (!cachedAlias && typeof window !== "undefined") {
-        try {
-          const raw = localStorage.getItem(`user_alias_${rawOwner.toLowerCase()}`);
-          if (raw) cachedAlias = JSON.parse(raw);
-        } catch (e) {}
-      }
-    }
-    if (!cachedAlias && rawEmail) {
-      cachedAlias = userProfileAliasCache.get(rawEmail.toLowerCase()) || null;
-      if (!cachedAlias && typeof window !== "undefined") {
-        try {
-          const raw = localStorage.getItem(`user_alias_${rawEmail.toLowerCase()}`);
-          if (raw) cachedAlias = JSON.parse(raw);
-        } catch (e) {}
-      }
-    }
-
-    let resolvedEmail = rawEmail;
-    if (!resolvedEmail) {
-      if (cachedAlias?.email) {
-        resolvedEmail = cachedAlias.email;
-      } else if (rawOwner.includes("@")) {
-        resolvedEmail = rawOwner.toLowerCase();
-      } else if (isOwnerMyself && firebaseAuth.currentUser?.email) {
-        resolvedEmail = firebaseAuth.currentUser.email.toLowerCase();
-      } else {
-        resolvedEmail = `owner_${rawOwner}@school.com`;
-      }
-    }
-
-    let resolvedUid = rawOwner;
-    if (!resolvedUid) {
-      if (cachedAlias?.uid) {
-        resolvedUid = cachedAlias.uid;
-      } else if (rawEmail) {
-        resolvedUid = `user_${rawEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
-      } else if (isOwnerMyself && firebaseAuth.currentUser?.uid) {
-        resolvedUid = firebaseAuth.currentUser.uid;
-      } else {
-        resolvedUid = "school_main";
-      }
-    }
-
-    // Save alias mapping in memory for fast synchronous lookup
-    if (resolvedUid && resolvedEmail && !resolvedEmail.endsWith("@school.com")) {
-      userProfileAliasCache.set(resolvedUid.toLowerCase(), { uid: resolvedUid, email: resolvedEmail });
-      userProfileAliasCache.set(resolvedEmail.toLowerCase(), { uid: resolvedUid, email: resolvedEmail });
-    }
-
-    return {
-      uid: resolvedUid,
-      email: resolvedEmail,
-      isGuest: !isOwnerMyself
-    };
-  }
-
   if (firebaseAuth.currentUser) {
     const cUid = firebaseAuth.currentUser.uid;
     const cEmail = firebaseAuth.currentUser.email?.toLowerCase() || "";
-    if (cUid && cEmail) {
+    if (cUid) {
       userProfileAliasCache.set(cUid.toLowerCase(), { uid: cUid, email: cEmail });
+    }
+    if (cEmail) {
       userProfileAliasCache.set(cEmail.toLowerCase(), { uid: cUid, email: cEmail });
     }
     return {
@@ -146,62 +72,57 @@ export function getEffectiveUidAndEmail(): { uid: string; email: string; isGuest
     };
   }
 
-  if (activeUserProxy && activeUserProxy.uid) {
+  if (activeUserProxy && (activeUserProxy.uid || activeUserProxy.email)) {
+    const pUid = activeUserProxy.uid || "";
+    const pEmail = (activeUserProxy.email || "").toLowerCase();
     return {
-      uid: activeUserProxy.uid,
-      email: activeUserProxy.email?.toLowerCase() || `owner_${activeUserProxy.uid}@school.com`,
-      isGuest: !!activeUserProxy.isGuest
+      uid: pUid,
+      email: pEmail,
+      isGuest: false
     };
   }
 
-  // Check stored ID in localStorage so write operations never fail
+  // Check URL parameters directly if available in browser
   if (typeof window !== "undefined") {
-    let linked = localStorage.getItem("linked_school_owner_id");
-    if (linked) {
-      return {
-        uid: linked,
-        email: `owner_${linked}@school.com`,
-        isGuest: true
-      };
-    }
-    let stored = localStorage.getItem("own_school_admin_id");
-    if (!stored) {
-      stored = "school_main";
-      localStorage.setItem("own_school_admin_id", stored);
-    }
-    return {
-      uid: stored,
-      email: `owner_${stored}@school.com`,
-      isGuest: true
-    };
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashIndex = window.location.hash.indexOf("?");
+      const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
+      const ownerParam = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "").trim();
+      const emailParam = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "").trim().toLowerCase();
+      if (ownerParam || emailParam) {
+        if (ownerParam) {
+          userProfileAliasCache.set(ownerParam.toLowerCase(), { uid: ownerParam, email: emailParam });
+        }
+        if (emailParam) {
+          userProfileAliasCache.set(emailParam.toLowerCase(), { uid: ownerParam, email: emailParam });
+        }
+        return {
+          uid: ownerParam,
+          email: emailParam,
+          isGuest: false
+        };
+      }
+    } catch (e) {}
   }
 
+  // If not logged in via Google Auth and no direct link params, user is unauthenticated with no data
   return {
-    uid: "school_main",
-    email: "owner_school_main@school.com",
+    uid: "",
+    email: "",
     isGuest: true
   };
 }
 
 export function getOrCreateOwnSchoolAdminId(): string {
-  if (typeof window !== "undefined") {
-    let linked = localStorage.getItem("linked_school_owner_id");
-    if (linked) return linked;
-    let stored = localStorage.getItem("own_school_admin_id");
-    if (!stored) {
-      stored = "school_main";
-      localStorage.setItem("own_school_admin_id", stored);
-    }
-    return stored;
-  }
-  return "school_main";
+  const eff = getEffectiveUidAndEmail();
+  return eff.uid || "";
 }
 
 export function setLinkedSchoolOwnerId(id: string): void {
-  if (typeof window !== "undefined" && id) {
-    const cleanId = id.trim();
-    localStorage.setItem("linked_school_owner_id", cleanId);
-    localStorage.setItem("own_school_admin_id", cleanId);
+  // Sets proxy if provided
+  if (id) {
+    activeUserProxy = { uid: id, email: id.includes("@") ? id : `owner_${id}@school.com` };
   }
 }
 
@@ -209,7 +130,7 @@ export function setLinkedSchoolOwnerId(id: string): void {
 const auth = {
   get currentUser() {
     const eff = getEffectiveUidAndEmail();
-    if (eff) {
+    if (eff && (eff.uid || eff.email)) {
       return {
         uid: eff.uid,
         email: eff.email,
@@ -233,25 +154,21 @@ const USERS_COLL = "registered_users";
 
 // --- ROBUST LOCAL CACHE & SYNC ENGINE ---
 function getLocalStorageKey(colName: string, uid?: string): string {
-  return `school_offline_cache_${colName}`;
+  const eff = getEffectiveUidAndEmail();
+  const userUid = uid || eff.uid || "";
+  return userUid ? `school_offline_cache_${userUid}_${colName}` : `school_offline_cache_${colName}`;
 }
 
 function getLocalItems(colName: string, uid?: string): any[] {
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = uid || eff.uid || "";
+  if (!currentUid && !eff.email) return [];
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(`school_offline_cache_${colName}`);
+    const raw = localStorage.getItem(`school_offline_cache_${currentUid}_${colName}`);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
-    }
-    
-    // Fallback check for legacy scoped cache key
-    if (uid) {
-      const legacyRaw = localStorage.getItem(`school_offline_cache_${uid}_${colName}`);
-      if (legacyRaw) {
-        const parsedLegacy = JSON.parse(legacyRaw);
-        if (Array.isArray(parsedLegacy)) return parsedLegacy;
-      }
     }
     return [];
   } catch (e) {
@@ -260,21 +177,30 @@ function getLocalItems(colName: string, uid?: string): any[] {
 }
 
 export function getLocalCollection<T = any>(colName: string, uid?: string): T[] {
+  const eff = getEffectiveUidAndEmail();
+  if (!eff.uid && !eff.email) {
+    return [];
+  }
   const items = getLocalItems(colName, uid);
   return (Array.isArray(items) ? items : []) as T[];
 }
 
 function setLocalItems(colName: string, items: any[], uid?: string) {
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = uid || eff.uid || "";
+  if (!currentUid && !eff.email) return;
   if (typeof window === "undefined") return;
   try {
     const safeItems = Array.isArray(items) ? items : [];
-    localStorage.setItem(getLocalStorageKey(colName, uid), JSON.stringify(safeItems));
+    localStorage.setItem(`school_offline_cache_${currentUid}_${colName}`, JSON.stringify(safeItems));
   } catch (e) {}
 }
 
 function saveOrUpdateLocalItem(colName: string, item: any, uid?: string) {
-  if (!item) return;
-  const items = getLocalItems(colName, uid);
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = uid || eff.uid || "";
+  if ((!currentUid && !eff.email) || !item) return;
+  const items = getLocalItems(colName, currentUid);
   const safeItems = Array.isArray(items) ? [...items] : [];
   const idx = safeItems.findIndex(i => i && i.id === item.id);
   if (idx >= 0) {
@@ -282,23 +208,29 @@ function saveOrUpdateLocalItem(colName: string, item: any, uid?: string) {
   } else {
     safeItems.push(item);
   }
-  setLocalItems(colName, safeItems, uid);
+  setLocalItems(colName, safeItems, currentUid);
   notifyCollectionSubscribers(colName, safeItems);
 }
 
 function removeLocalItem(colName: string, id: string, uid?: string) {
-  const items = getLocalItems(colName, uid);
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = uid || eff.uid || "";
+  if (!currentUid && !eff.email) return;
+  const items = getLocalItems(colName, currentUid);
   const safeItems = Array.isArray(items) ? items : [];
   const filtered = safeItems.filter(i => i && i.id !== id);
-  setLocalItems(colName, filtered, uid);
+  setLocalItems(colName, filtered, currentUid);
   notifyCollectionSubscribers(colName, filtered);
 }
 
 function removeLocalItemsBy(colName: string, predicate: (item: any) => boolean, uid?: string) {
-  const items = getLocalItems(colName, uid);
+  const eff = getEffectiveUidAndEmail();
+  const currentUid = uid || eff.uid || "";
+  if (!currentUid && !eff.email) return;
+  const items = getLocalItems(colName, currentUid);
   const safeItems = Array.isArray(items) ? items : [];
   const filtered = safeItems.filter(i => i && !predicate(i));
-  setLocalItems(colName, filtered, uid);
+  setLocalItems(colName, filtered, currentUid);
   notifyCollectionSubscribers(colName, filtered);
 }
 
@@ -372,6 +304,12 @@ function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadca
   
   hub.latestData = dataToBroadcast;
   hub.lastUpdated = Date.now();
+
+  // If new items were received (e.g. from broadcast), update local storage cache too
+  if (Array.isArray(items) && currentUid) {
+    setLocalItems(colName, dataToBroadcast, currentUid);
+  }
+
   hub.callbacks.forEach(cb => {
     try { cb(dataToBroadcast); } catch (_) {}
   });
@@ -391,8 +329,171 @@ function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadca
 // Helper to check if a document belongs to a specific user/school
 export function isDocBelongingToUser(data: any, currentUid?: string, currentEmail?: string): boolean {
   if (!data) return false;
-  // All documents in this school database belong to the active school system and sync universally
-  return true;
+  
+  const eff = getEffectiveUidAndEmail();
+  const targetUid = (currentUid || eff.uid || firebaseAuth.currentUser?.uid || "").trim();
+  const targetEmail = (currentEmail || eff.email || firebaseAuth.currentUser?.email || "").toLowerCase().trim();
+
+  // Extract all potential doc identifiers
+  const docUserId = (
+    (typeof data.userId === "string" ? data.userId : "") ||
+    (typeof data.ownerId === "string" ? data.ownerId : "") ||
+    (typeof data.owner === "string" ? data.owner : "") ||
+    (typeof data.uid === "string" ? data.uid : "") ||
+    (typeof data.user_id === "string" ? data.user_id : "") ||
+    (typeof data.creatorId === "string" ? data.creatorId : "") ||
+    (typeof data.adminId === "string" ? data.adminId : "")
+  ).trim();
+
+  const docUserEmail = (
+    (typeof data.userEmail === "string" ? data.userEmail : "") ||
+    (typeof data.ownerEmail === "string" ? data.ownerEmail : "") ||
+    (typeof data.email === "string" ? data.email : "") ||
+    (typeof data.owner_email === "string" ? data.owner_email : "") ||
+    (typeof data.user_email === "string" ? data.user_email : "") ||
+    (typeof data.creatorEmail === "string" ? data.creatorEmail : "")
+  ).toLowerCase().trim();
+
+  const docSchoolName = (
+    (typeof data.schoolName === "string" ? data.schoolName : "") ||
+    (typeof data.school === "string" ? data.school : "") ||
+    (typeof data.school_name === "string" ? data.school_name : "")
+  ).trim();
+
+  // Auto-record known aliases into cache
+  if (docUserId && docUserEmail) {
+    userProfileAliasCache.set(docUserId.toLowerCase(), { uid: docUserId, email: docUserEmail, schoolName: docSchoolName });
+    userProfileAliasCache.set(docUserEmail.toLowerCase(), { uid: docUserId, email: docUserEmail, schoolName: docSchoolName });
+  }
+
+  if (!targetUid && !targetEmail) {
+    // If not authenticated, check if document belongs to URL param owner
+    if (typeof window !== "undefined") {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const hashIndex = window.location.hash.indexOf("?");
+        const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
+        const ownerParam = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "").trim();
+        const emailParam = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "").trim().toLowerCase();
+        if (ownerParam && docUserId && (ownerParam === docUserId || ownerParam.toLowerCase() === docUserId.toLowerCase())) return true;
+        if (emailParam && docUserEmail && (emailParam === docUserEmail || emailParam.toLowerCase() === docUserEmail.toLowerCase())) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  // 1. Direct UID match (case-insensitive)
+  if (targetUid && docUserId && (targetUid === docUserId || targetUid.toLowerCase() === docUserId.toLowerCase())) {
+    return true;
+  }
+
+  // 2. Direct Email match (case-insensitive)
+  if (targetEmail && docUserEmail && (targetEmail === docUserEmail || targetEmail.toLowerCase() === docUserEmail.toLowerCase())) {
+    return true;
+  }
+
+  // 3. Email passed as UID or UID passed as Email
+  if (targetEmail && docUserId && (targetEmail === docUserId.toLowerCase())) {
+    return true;
+  }
+  if (targetUid && docUserEmail && (targetUid.toLowerCase() === docUserEmail)) {
+    return true;
+  }
+
+  // 4. User Alias Cache & localStorage mapping (targetUid <-> docUserEmail)
+  if (targetUid && docUserEmail) {
+    const cached = userProfileAliasCache.get(targetUid.toLowerCase());
+    if (cached && cached.email === docUserEmail) return true;
+    try {
+      const raw = localStorage.getItem(`user_alias_${targetUid.toLowerCase()}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.email === docUserEmail) return true;
+      }
+    } catch (_) {}
+  }
+
+  // 5. User Alias Cache & localStorage mapping (docUserId <-> targetEmail)
+  if (docUserId && targetEmail) {
+    const cached = userProfileAliasCache.get(docUserId.toLowerCase());
+    if (cached && cached.email === targetEmail) return true;
+    try {
+      const raw = localStorage.getItem(`user_alias_${docUserId.toLowerCase()}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.email === targetEmail) return true;
+      }
+    } catch (_) {}
+  }
+
+  // 6. User Alias Cache & localStorage mapping (docUserEmail <-> targetEmail)
+  if (targetEmail) {
+    const cached = userProfileAliasCache.get(targetEmail);
+    if (cached && (cached.uid === docUserId || cached.email === docUserEmail)) return true;
+  }
+
+  // 7. Check own school admin ID and linked owner ID in localStorage
+  try {
+    const ownAdminId = localStorage.getItem("own_school_admin_id");
+    if (ownAdminId && (ownAdminId === docUserId || ownAdminId === targetUid || ownAdminId.toLowerCase() === docUserId.toLowerCase())) {
+      if (docUserEmail && targetEmail && docUserEmail === targetEmail) return true;
+      if (!docUserEmail || !targetEmail) return true;
+    }
+    const linkedOwnerId = localStorage.getItem("linked_school_owner_id");
+    if (linkedOwnerId && (linkedOwnerId === docUserId || linkedOwnerId === targetUid || linkedOwnerId.toLowerCase() === docUserId.toLowerCase())) {
+      return true;
+    }
+    const cachedSchoolName = localStorage.getItem("school_name_cache");
+    if (cachedSchoolName && docSchoolName && (cachedSchoolName.trim() === docSchoolName.trim())) {
+      return true;
+    }
+  } catch (_) {}
+
+  // 8. Active user proxy match
+  if (activeUserProxy) {
+    if (activeUserProxy.uid && docUserId && (activeUserProxy.uid === docUserId || activeUserProxy.uid.toLowerCase() === docUserId.toLowerCase())) return true;
+    if (activeUserProxy.email && docUserEmail && (activeUserProxy.email.toLowerCase() === docUserEmail)) return true;
+  }
+
+  // 9. URL Params fallback if present in current browser window
+  if (typeof window !== "undefined") {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashIndex = window.location.hash.indexOf("?");
+      const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
+      const ownerParam = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "").trim();
+      const emailParam = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "").trim().toLowerCase();
+      const schoolParam = (searchParams.get("school") || hashParams?.get("school") || "").trim();
+      if (ownerParam && docUserId && (ownerParam === docUserId || ownerParam.toLowerCase() === docUserId.toLowerCase())) return true;
+      if (emailParam && docUserEmail && (emailParam === docUserEmail || emailParam.toLowerCase() === docUserEmail.toLowerCase())) return true;
+      if (schoolParam && docSchoolName && (schoolParam === docSchoolName || decodeURIComponent(schoolParam) === docSchoolName)) return true;
+    } catch (_) {}
+  }
+
+  return false;
+}
+
+/**
+ * Resets all in-memory collection hubs, unsubscribes active Firestore listeners,
+ * and clears transient caches to prevent cross-account data leaks upon logout or account switch.
+ */
+export function clearUserSessionState(): void {
+  collectionHubs.forEach((hub) => {
+    if (hub.unsub) {
+      try { hub.unsub(); } catch (_) {}
+      hub.unsub = null;
+    }
+    if (hub.cleanupTimer) {
+      clearTimeout(hub.cleanupTimer);
+      hub.cleanupTimer = null;
+    }
+    hub.callbacks.clear();
+    hub.latestData = [];
+    hub.lastUpdated = 0;
+  });
+  collectionHubs.clear();
+  userProfileAliasCache.clear();
+  activeUserProxy = null;
 }
 
 /**
@@ -659,12 +760,17 @@ export async function updateAttendanceAbsenceExcuse(recordId: string, studentId:
 async function fetchAndFilterCollection(colName: string): Promise<any[]> {
   const eff = getEffectiveUidAndEmail();
   const currentUid = eff.uid;
-  const currentEmail = eff.email?.toLowerCase() || "";
+  const currentEmail = eff.email;
+
+  if (!currentUid && !currentEmail) {
+    return [];
+  }
 
   // 1. Check in-memory collection hub first
   const hub = collectionHubs.get(colName);
   if (hub && Array.isArray(hub.latestData) && hub.latestData.length > 0 && Date.now() - hub.lastUpdated < 60000) {
-    return hub.latestData;
+    const safeHubList = hub.latestData.filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+    return safeHubList;
   }
 
   // 2. Load from local storage cache
@@ -757,6 +863,10 @@ export async function getStudentsByClass(gradeId: string, classId: string): Prom
   return safeStudents.filter(s => s && s.gradeId === gradeId && s.classId === classId) as Student[];
 }
 
+// Normalize period strings for matching (e.g. "حصة 1", "حصة_1", "1")
+const normalizePeriodKey = (p?: string) => (p || "").replace(/[\s_]+/g, "").trim().toLowerCase();
+const normalizeKey = (s?: string) => (s || "").trim().toLowerCase();
+
 // Fetch Attendance Record for a specific date, period, grade, class
 export async function getAttendanceRecord(
   date: string,
@@ -764,8 +874,14 @@ export async function getAttendanceRecord(
   gradeId: string,
   classId: string
 ): Promise<AttendanceRecord | null> {
+  const normPeriod = normalizePeriodKey(period);
   const records = await fetchAndFilterCollection(ATTENDANCE_COLL);
-  const found = records.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId);
+  const found = records.find(r => 
+    r.date === date && 
+    normalizePeriodKey(r.period) === normPeriod && 
+    (r.gradeId === gradeId || normalizeKey(r.gradeId) === normalizeKey(gradeId)) && 
+    (r.classId === classId || normalizeKey(r.classId) === normalizeKey(classId))
+  );
   return found ? (found as AttendanceRecord) : null;
 }
 
@@ -778,8 +894,14 @@ export function subscribeToAttendanceRecord(
   callback: (record: AttendanceRecord | null) => void,
   onError?: (error: any) => void
 ) {
+  const normPeriod = normalizePeriodKey(period);
   return subscribeToCollection(ATTENDANCE_COLL, (records) => {
-    const found = records.find(r => r.date === date && r.period === period && r.gradeId === gradeId && r.classId === classId) || null;
+    const found = records.find(r => 
+      r.date === date && 
+      normalizePeriodKey(r.period) === normPeriod && 
+      (r.gradeId === gradeId || normalizeKey(r.gradeId) === normalizeKey(gradeId)) && 
+      (r.classId === classId || normalizeKey(r.classId) === normalizeKey(classId))
+    ) || null;
     callback(found);
   }, onError);
 }
@@ -787,9 +909,36 @@ export function subscribeToAttendanceRecord(
 // Save Attendance Record (Instant local-first cache + real-time Firestore sync)
 export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" | "timestamp">): Promise<void> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff.uid;
-  const email = eff.email;
+  let uid = eff.uid || (firebaseAuth.currentUser?.uid) || "";
+  let email = (eff.email || firebaseAuth.currentUser?.email || "").toLowerCase();
   
+  if (!email && uid) {
+    const cached = userProfileAliasCache.get(uid.toLowerCase());
+    if (cached?.email) email = cached.email;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${uid.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch (_) {}
+    }
+  }
+  if (!uid && email) {
+    const cached = userProfileAliasCache.get(email.toLowerCase());
+    if (cached?.uid) uid = cached.uid;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${email.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.uid) uid = parsed.uid;
+        }
+      } catch (_) {}
+    }
+  }
+
   // Deterministic canonical ID per slot to guarantee 100% unified sync across all devices
   const sanitizedPeriod = (record.period || "1").replace(/\s+/g, '_');
   const recordId = `att_${record.date}_${sanitizedPeriod}_${record.gradeId}_${record.classId}`;
@@ -806,10 +955,14 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   // 1. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
-  // 2. Persist to Firestore
+  // 2. Persist to Firestore (safeguarded non-blocking timeout)
   try {
     const docRef = doc(db, ATTENDANCE_COLL, recordId);
-    await setDoc(docRef, fullRecord, { merge: true });
+    const writePromise = setDoc(docRef, fullRecord, { merge: true });
+    await Promise.race([
+      writePromise,
+      new Promise(resolve => setTimeout(resolve, 800))
+    ]);
   } catch (err: any) {
     handleFirestoreError(err);
   }
@@ -910,8 +1063,36 @@ export function subscribeToBehaviorRecords(
 // Save Behavior Record (Instant local-first cache + real-time Firestore sync)
 export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff.uid;
-  const email = eff.email;
+  let uid = eff.uid || (firebaseAuth.currentUser?.uid) || "";
+  let email = (eff.email || firebaseAuth.currentUser?.email || "").toLowerCase();
+  
+  if (!email && uid) {
+    const cached = userProfileAliasCache.get(uid.toLowerCase());
+    if (cached?.email) email = cached.email;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${uid.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch (_) {}
+    }
+  }
+  if (!uid && email) {
+    const cached = userProfileAliasCache.get(email.toLowerCase());
+    if (cached?.uid) uid = cached.uid;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${email.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.uid) uid = parsed.uid;
+        }
+      } catch (_) {}
+    }
+  }
+
   const newId = generateLocalId("beh");
 
   const fullRecord = {
@@ -983,13 +1164,38 @@ export function subscribeToMorningDelayRecords(
 // Save Morning Delay Record (Instant local-first optimistic cache + real-time Firestore sync)
 export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "id" | "timestamp">): Promise<string> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff.uid;
-  const email = eff.email;
+  let uid = eff.uid || (firebaseAuth.currentUser?.uid) || "";
+  let email = (eff.email || firebaseAuth.currentUser?.email || "").toLowerCase();
   
-  // Instant lookup from local cache instead of slow network roundtrip
-  const localList = getLocalItems(MORNING_DELAYS_COLL);
-  const existing = localList.find(r => r.date === record.date && r.studentId === record.studentId && isDocBelongingToUser(r, uid, email));
-  const recordId = existing?.id || generateLocalId("delay");
+  if (!email && uid) {
+    const cached = userProfileAliasCache.get(uid.toLowerCase());
+    if (cached?.email) email = cached.email;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${uid.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch (_) {}
+    }
+  }
+  if (!uid && email) {
+    const cached = userProfileAliasCache.get(email.toLowerCase());
+    if (cached?.uid) uid = cached.uid;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${email.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.uid) uid = parsed.uid;
+        }
+      } catch (_) {}
+    }
+  }
+  
+  // Deterministic canonical record ID per student per day for rock-solid cross-device sync
+  const recordId = `delay_${record.date}_${record.studentId}`;
 
   const fullRecord: MorningDelayRecord = {
     ...record,
@@ -1001,12 +1207,16 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
   };
 
   // 1. Instant local cache update (0ms)
-  saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord);
+  saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord, uid);
 
-  // 2. Real-time Firestore write
+  // 2. Real-time Firestore write (safeguarded non-blocking timeout)
   try {
     const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
-    await setDoc(docRef, fullRecord, { merge: true });
+    const writePromise = setDoc(docRef, fullRecord, { merge: true });
+    await Promise.race([
+      writePromise,
+      new Promise(resolve => setTimeout(resolve, 800))
+    ]);
   } catch (err: any) {
     handleFirestoreError(err);
   }
@@ -1017,43 +1227,154 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
 // Save Multiple Morning Delay Records in Batch
 export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "id" | "timestamp">[]): Promise<void> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff.uid;
-  const email = eff.email;
+  let uid = eff.uid || (firebaseAuth.currentUser?.uid) || "";
+  let email = (eff.email || firebaseAuth.currentUser?.email || "").toLowerCase();
+  
+  if (!email && uid) {
+    const cached = userProfileAliasCache.get(uid.toLowerCase());
+    if (cached?.email) email = cached.email;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${uid.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.email) email = parsed.email;
+        }
+      } catch (_) {}
+    }
+  }
+  if (!uid && email) {
+    const cached = userProfileAliasCache.get(email.toLowerCase());
+    if (cached?.uid) uid = cached.uid;
+    else {
+      try {
+        const raw = localStorage.getItem(`user_alias_${email.toLowerCase()}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.uid) uid = parsed.uid;
+        }
+      } catch (_) {}
+    }
+  }
 
   // Local cache update
   records.forEach(r => {
+    const recordId = `delay_${r.date}_${r.studentId}`;
     saveOrUpdateLocalItem(MORNING_DELAYS_COLL, {
       ...r,
-      id: generateLocalId("delay"),
+      id: recordId,
       userId: uid,
       userEmail: email,
-      timestamp: Date.now()
-    });
+      timestamp: Date.now(),
+      updatedAt: Date.now()
+    }, uid);
   });
 
   try {
     const batch = writeBatch(db);
     for (const record of records) {
-      const docRef = doc(collection(db, MORNING_DELAYS_COLL));
+      const recordId = `delay_${record.date}_${record.studentId}`;
+      const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
       batch.set(docRef, {
         ...record,
+        id: recordId,
         userId: uid,
         userEmail: email,
-        timestamp: serverTimestamp()
-      });
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      }, { merge: true });
     }
-    await batch.commit();
+    const writePromise = batch.commit();
+    await Promise.race([
+      writePromise,
+      new Promise(resolve => setTimeout(resolve, 1000))
+    ]);
   } catch (err: any) {
     handleFirestoreError(err);
   }
 }
 
-// Delete Morning Delay Record (Instant local purge + real-time Firestore delete)
-export async function deleteMorningDelayRecord(id: string): Promise<void> {
+// Delete Morning Delay Record (Instant local purge + real-time Firestore multi-doc delete)
+export async function deleteMorningDelayRecord(
+  id: string,
+  extra?: { studentId?: string; date?: string }
+): Promise<void> {
   const eff = getEffectiveUidAndEmail();
-  removeLocalItem(MORNING_DELAYS_COLL, id, eff.uid);
+  const uid = eff.uid;
+  const email = (eff.email || "").toLowerCase();
+
+  // 1. Extract target studentId & date from extra, cache, or id string
+  let targetStudentId = extra?.studentId || "";
+  let targetDate = extra?.date || "";
+
+  if ((!targetDate || !targetStudentId) && id && id.startsWith("delay_")) {
+    const parts = id.split("_");
+    if (parts.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(parts[1])) {
+      if (!targetDate) targetDate = parts[1];
+      if (!targetStudentId) targetStudentId = parts.slice(2).join("_");
+    }
+  }
+
+  const localItems = getLocalItems(MORNING_DELAYS_COLL, uid);
+  const found = localItems.find(item => item && (
+    item.id === id || 
+    (targetStudentId && item.studentId === targetStudentId && targetDate && item.date === targetDate)
+  ));
+  
+  if (found) {
+    if (!targetStudentId && found.studentId) targetStudentId = found.studentId;
+    if (!targetDate && found.date) targetDate = found.date;
+  }
+
+  // 2. Instant local-first purge across all matching criteria (0ms)
+  removeLocalItemsBy(MORNING_DELAYS_COLL, (item) => {
+    if (item.id === id) return true;
+    if (targetStudentId && targetDate && item.studentId === targetStudentId && item.date === targetDate) return true;
+    return false;
+  }, uid);
+
+  // 3. Real-time Firestore deletion across exact ID, canonical ID, and all matching docs
   try {
-    await deleteDoc(doc(db, MORNING_DELAYS_COLL, id));
+    const batch = writeBatch(db);
+    let batchCount = 0;
+
+    // a) Direct ID delete
+    if (id) {
+      batch.delete(doc(db, MORNING_DELAYS_COLL, id));
+      batchCount++;
+    }
+
+    // b) Canonical ID delete
+    if (targetDate && targetStudentId) {
+      const canonicalId = `delay_${targetDate}_${targetStudentId}`;
+      if (canonicalId !== id) {
+        batch.delete(doc(db, MORNING_DELAYS_COLL, canonicalId));
+        batchCount++;
+      }
+    }
+
+    // c) Scan Firestore collection for any duplicates or mismatched doc IDs belonging to this user
+    try {
+      const colRef = collection(db, MORNING_DELAYS_COLL);
+      const snapshot = await getDocs(colRef);
+      snapshot.forEach(docSnap => {
+        const d = docSnap.data();
+        if (isDocBelongingToUser(d, uid, email)) {
+          const matchId = docSnap.id === id || d.id === id;
+          const matchStudentAndDate = targetStudentId && targetDate && (d.studentId === targetStudentId && d.date === targetDate);
+          if (matchId || matchStudentAndDate) {
+            batch.delete(doc(db, MORNING_DELAYS_COLL, docSnap.id));
+            batchCount++;
+          }
+        }
+      });
+    } catch (scanErr) {
+      console.warn("Error scanning morning delays for delete:", scanErr);
+    }
+
+    if (batchCount > 0) {
+      await batch.commit();
+    }
   } catch (err: any) {
     handleFirestoreError(err);
   }
@@ -1329,6 +1650,51 @@ export async function deleteClass(id: string): Promise<void> {
   } catch (err: any) {
     handleFirestoreError(err);
   }
+}
+
+// Restore default classes (e.g. الفصل 1 إلى الفصل 6) for a specific grade or first grade
+export async function restoreGradeDefaultClasses(gradeId: string, count: number = 6): Promise<{ id: string; name: string; gradeId: string }[]> {
+  const classesToAdd: { name: string; gradeId: string }[] = [];
+  for (let i = 1; i <= count; i++) {
+    classesToAdd.push({
+      name: `الفصل ${i}`,
+      gradeId
+    });
+  }
+  return await addClassesBatch(classesToAdd);
+}
+
+// Auto-restore First Grade classes if deleted
+export async function restoreFirstGradeClasses(targetGradeId?: string, count: number = 6): Promise<{ grade: Grade | null; classes: Class[] }> {
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid;
+  const email = eff.email;
+
+  let grades = await getGrades();
+  let firstGrade = targetGradeId 
+    ? grades.find(g => g.id === targetGradeId)
+    : grades.find(g => {
+        const norm = (g.name || "").trim().toLowerCase();
+        return norm.includes("اول") || norm.includes("أول") || norm.includes("1");
+      });
+
+  if (!firstGrade && grades.length > 0) {
+    firstGrade = grades[0];
+  }
+
+  if (!firstGrade) {
+    // Create first grade if not found
+    const gradeId = await addGrade("الصف الأول");
+    firstGrade = { id: gradeId, name: "الصف الأول" };
+  }
+
+  const restored = await restoreGradeDefaultClasses(firstGrade.id, count);
+  const allClasses = await getClasses();
+
+  return {
+    grade: firstGrade,
+    classes: allClasses.filter(c => c.gradeId === firstGrade!.id)
+  };
 }
 
 // Add Teacher
@@ -1630,19 +1996,15 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
 // --- SCHOOL SETTINGS ---
 export async function getSchoolName(): Promise<string> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff?.uid || "school_main";
-  const email = eff?.email || "";
+  const uid = eff.uid;
+  const email = eff.email;
+  if (!uid && !email) {
+    return "";
+  }
   
   if (typeof window !== "undefined") {
-    const localName = localStorage.getItem(`school_name_${uid}`) || (email ? localStorage.getItem(`school_name_${email}`) : null) || localStorage.getItem("school_name_cached");
+    const localName = localStorage.getItem(`school_name_${uid}`);
     if (localName) return localName;
-  }
-
-  if (isQuotaExhausted()) {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem(`school_name_${uid}`) || localStorage.getItem("school_name_cached") || "";
-    }
-    return "";
   }
 
   try {
@@ -1652,19 +2014,16 @@ export async function getSchoolName(): Promise<string> {
       const data = docSnap.data();
       if (data.schoolName && isDocBelongingToUser(data, uid, email)) {
         schoolNameVal = data.schoolName;
-      } else if (!schoolNameVal && data.schoolName) {
-        schoolNameVal = data.schoolName;
       }
     });
     if (schoolNameVal && typeof window !== "undefined") {
       localStorage.setItem(`school_name_${uid}`, schoolNameVal);
-      localStorage.setItem("school_name_cached", schoolNameVal);
     }
     return schoolNameVal;
   } catch (err: any) {
     handleFirestoreError(err);
     if (typeof window !== "undefined") {
-      return localStorage.getItem(`school_name_${uid}`) || localStorage.getItem("school_name_cached") || "";
+      return localStorage.getItem(`school_name_${uid}`) || "";
     }
   }
   return "";
@@ -1672,14 +2031,12 @@ export async function getSchoolName(): Promise<string> {
 
 export async function saveSchoolName(schoolName: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
-  const uid = eff?.uid || "school_main";
-  const email = eff?.email || "";
-  if (!uid) return;
+  const uid = eff.uid;
+  const email = eff.email;
+  if (!uid && !email) return;
 
   if (typeof window !== "undefined") {
     localStorage.setItem(`school_name_${uid}`, schoolName);
-    localStorage.setItem(`school_name_cached`, schoolName);
-    if (email) localStorage.setItem(`school_name_${email}`, schoolName);
   }
 
   try {
@@ -1691,12 +2048,13 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
 // Generic live subscription helper using collection multiplexing hub
 function subscribeToCollection(colName: string, callback: (data: any[]) => void, onError?: (error: any) => void) {
   const eff = getEffectiveUidAndEmail();
-  if (!eff) {
+  const currentUid = eff.uid;
+  const currentEmail = eff.email;
+
+  if (!currentUid && !currentEmail) {
     callback([]);
     return () => {};
   }
-  const currentUid = eff.uid;
-  const currentEmail = eff.email;
 
   const hub = getCollectionHub(colName);
 
@@ -1731,6 +2089,11 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         const activeEff = getEffectiveUidAndEmail();
         const activeUid = activeEff.uid;
         const activeEmail = activeEff.email;
+        if (!activeUid && !activeEmail) {
+          hub.latestData = [];
+          hub.callbacks.forEach(cb => { try { cb([]); } catch (_) {} });
+          return;
+        }
         const results: any[] = [];
         const seenIds = new Set<string>();
         snapshot.forEach(docSnap => {
@@ -1762,9 +2125,15 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
           } catch (_) {}
         }
       }, (error: any) => {
-        const activeEff = getEffectiveUidAndEmail();
-        const fallbackRaw = getLocalItems(colName, activeEff.uid);
-        const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, activeEff.uid, activeEff.email)) : [];
+        if (!firebaseAuth.currentUser) {
+          hub.latestData = [];
+          hub.callbacks.forEach(cb => { try { cb([]); } catch (_) {} });
+          return;
+        }
+        const activeUid = firebaseAuth.currentUser.uid;
+        const activeEmail = firebaseAuth.currentUser.email?.toLowerCase() || "";
+        const fallbackRaw = getLocalItems(colName, activeUid);
+        const fallbackList = Array.isArray(fallbackRaw) ? fallbackRaw.filter(item => isDocBelongingToUser(item, activeUid, activeEmail)) : [];
         hub.latestData = fallbackList;
         hub.callbacks.forEach(cb => {
           try { cb(fallbackList); } catch (_) {}
@@ -1844,12 +2213,15 @@ export function subscribeToStudents(callback: (students: Student[]) => void, onE
 
 // Subscribe School Name in real-time
 export function subscribeToSchoolName(callback: (schoolName: string) => void, onError?: (error: any) => void) {
-  const eff = getEffectiveUidAndEmail();
-  const currentUid = eff?.uid || "school_main";
-  const currentEmail = eff?.email || "";
+  if (!firebaseAuth.currentUser) {
+    callback("");
+    return () => {};
+  }
+  const currentUid = firebaseAuth.currentUser.uid;
+  const currentEmail = firebaseAuth.currentUser.email?.toLowerCase() || "";
 
   if (typeof window !== "undefined") {
-    const cached = localStorage.getItem(`school_name_${currentUid}`) || (currentEmail ? localStorage.getItem(`school_name_${currentEmail}`) : null) || localStorage.getItem("school_name_cached");
+    const cached = localStorage.getItem(`school_name_${currentUid}`);
     if (cached) callback(cached);
   }
 
@@ -1858,17 +2230,12 @@ export function subscribeToSchoolName(callback: (schoolName: string) => void, on
     records.forEach(data => {
       if (data.schoolName && isDocBelongingToUser(data, currentUid, currentEmail)) {
         schoolNameVal = data.schoolName;
-      } else if (!schoolNameVal && data.schoolName) {
-        schoolNameVal = data.schoolName;
       }
     });
     if (schoolNameVal && typeof window !== "undefined") {
       localStorage.setItem(`school_name_${currentUid}`, schoolNameVal);
-      localStorage.setItem("school_name_cached", schoolNameVal);
     }
-    if (schoolNameVal) {
-      callback(schoolNameVal);
-    }
+    callback(schoolNameVal || "");
   }, onError);
 }
 

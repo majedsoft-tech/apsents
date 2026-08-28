@@ -15,18 +15,25 @@ import {
   subscribeToSchoolName,
   registerUserInDb,
   setActiveUser,
+  clearUserSessionState,
   syncAllLocalDataToFirestore,
   migrateGuestDataToUser,
   resolveOwnerProfileFromDb,
   getOrCreateOwnSchoolAdminId,
-  setLinkedSchoolOwnerId
+  setLinkedSchoolOwnerId,
+  restoreGradeDefaultClasses
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
 import MorningDelayPortal from "./components/MorningDelayPortal";
 import AdminPanel from "./components/AdminPanel";
 import SuperAdminPanel from "./components/SuperAdminPanel";
-import TourGuide from "./components/TourGuide";
+import MobileTopHeader from "./components/MobileTopHeader";
+import MobileBottomNav from "./components/MobileBottomNav";
+import MobileDrawer from "./components/MobileDrawer";
+import DesktopHeader from "./components/DesktopHeader";
+import ShareLinksModal from "./components/ShareLinksModal";
+import { useDevice } from "./hooks/useDevice";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "./firebase";
 import { 
@@ -154,9 +161,6 @@ export default function App() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Onboarding Interactive Tour State
-  const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
-
   // Responsive Navigation States
   const [appMode, setAppMode] = useState<"teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay">(getInitialMode());
   const [isDirectTeacherLink, setIsDirectTeacherLink] = useState<boolean>(() => {
@@ -166,7 +170,7 @@ export default function App() {
     return getInitialMode() === "morning-delay";
   });
 
-  // If the user navigates to admin or other sections, reset direct link status
+  // If the user manually navigates to admin or other sections, reset direct link status
   useEffect(() => {
     if (appMode !== "teacher") {
       setIsDirectTeacherLink(false);
@@ -176,8 +180,11 @@ export default function App() {
     }
   }, [appMode]);
 
-  const showSidebar = appMode === "admin" || appMode === "super-admin" || (appMode === "teacher" && !isDirectTeacherLink) || (appMode === "morning-delay" && !isDirectMorningDelayLink);
-  const showHeader = (appMode !== "teacher" || !isDirectTeacherLink) && (appMode !== "morning-delay" || !isDirectMorningDelayLink);
+  const isDirectKiosk = isDirectTeacherLink || isDirectMorningDelayLink;
+  const showSidebar = !isDirectKiosk && (appMode === "admin" || appMode === "super-admin" || appMode === "teacher" || appMode === "morning-delay");
+  const showHeader = !isDirectKiosk;
+  const showMobileHeader = !isDirectKiosk;
+  const showMobileBottomNav = !isDirectKiosk;
 
   // Ref for header height measurement
   const headerRef = React.useRef<HTMLElement>(null);
@@ -204,12 +211,18 @@ export default function App() {
     };
   }, [showHeader, appMode]);
 
+  const device = useDevice();
   const [copied, setCopied] = useState<boolean>(false);
   const [teacherCopied, setTeacherCopied] = useState<boolean>(false);
   const [morningDelayCopied, setMorningDelayCopied] = useState<boolean>(false);
   const [teacherTab, setTeacherTab] = useState<"attendance" | "behavior">(getInitialTeacherTab());
   const [adminTab, setAdminTab] = useState<"stats" | "grades" | "teachers" | "students">(getInitialAdminTab());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [isSchoolModalOpen, setIsSchoolModalOpen] = useState<boolean>(false);
+  const [schoolModalInput, setSchoolModalInput] = useState<string>("");
+  const [isRefreshingData, setIsRefreshingData] = useState<boolean>(false);
   const [todayCounts, setTodayCounts] = useState<{ absentCount: number; behaviorCount: number }>({ absentCount: 0, behaviorCount: 0 });
 
   // Desktop sidebar control states - Sidebar is permanently pinned and open
@@ -249,63 +262,33 @@ export default function App() {
     }
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      if (ownerParam || emailParam) {
-        const decodedOwner = ownerParam ? decodeURIComponent(ownerParam) : "";
-        const decodedEmail = emailParam ? decodeURIComponent(emailParam).toLowerCase() : "";
-
-        let effEmail = decodedEmail 
-          ? decodedEmail 
-          : (decodedOwner.includes("@") ? decodedOwner.toLowerCase() : (user?.email?.toLowerCase() || `owner_${decodedOwner}@school.com`));
-        let effUid = decodedOwner 
-          ? decodedOwner 
-          : (decodedEmail ? `user_${decodedEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : (user?.uid || "school_default"));
-
-        const guestUser = {
-          uid: effUid,
-          email: effEmail,
-          displayName: schoolParam ? decodeURIComponent(schoolParam) : (user?.uid === effUid ? (user?.displayName || "مدير المدرسة") : "زائر (مباشر)"),
-          isGuest: user?.uid !== effUid
-        };
-        setCurrentUser(guestUser);
-        setActiveUser(guestUser);
-
-        // Asynchronously resolve owner profile from DB to attach real registered email and school name
-        if (decodedOwner || decodedEmail) {
-          resolveOwnerProfileFromDb(decodedOwner || decodedEmail).then((profile) => {
-            if (profile) {
-              const updatedGuestUser = {
-                uid: profile.uid || effUid,
-                email: profile.email || effEmail,
-                displayName: profile.schoolName || guestUser.displayName,
-                isGuest: user?.uid !== (profile.uid || effUid)
-              };
-              setCurrentUser(updatedGuestUser);
-              setActiveUser(updatedGuestUser);
-              if (profile.schoolName) {
-                setSchoolName(profile.schoolName);
-              }
-            }
-          }).catch(() => {});
-        }
-      } else if (user) {
-        const prevGuestId = localStorage.getItem("own_school_admin_id");
-        if (prevGuestId && prevGuestId !== user.uid) {
-          migrateGuestDataToUser(prevGuestId, user.uid, user.email?.toLowerCase() || "").catch(() => {});
-        }
+      clearUserSessionState();
+      if (user) {
         setCurrentUser(user);
         setActiveUser(user);
-        // Automatic full background synchronization for the logged-in admin
+        // Automatic background sync for authenticated user
         syncAllLocalDataToFirestore().catch(() => {});
       } else {
-        const ownSchoolId = getOrCreateOwnSchoolAdminId();
-        const guestUser = {
-          uid: ownSchoolId,
-          email: `owner_${ownSchoolId}@school.com`,
-          displayName: "مدير المدرسة (غير مسجل)",
-          isGuest: true
-        };
-        setCurrentUser(guestUser);
-        setActiveUser(guestUser);
+        // If accessed via direct link with owner/email params, initialize proxy user for direct viewing
+        if (ownerParam || emailParam) {
+          const directUser = {
+            uid: ownerParam,
+            email: emailParam,
+            displayName: "المعلم / المشرف",
+            isGuest: false
+          };
+          setActiveUser(directUser);
+          setCurrentUser(directUser);
+        } else {
+          setCurrentUser(null);
+          setActiveUser(null);
+          setGrades([]);
+          setClasses([]);
+          setTeachers([]);
+          setStudents([]);
+          setSchoolName("");
+          setTodayCounts({ absentCount: 0, behaviorCount: 0 });
+        }
       }
       setAuthChecking(false);
     });
@@ -356,12 +339,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!currentUser) {
+    const isDirectPortal = isDirectTeacherLink || isDirectMorningDelayLink || appMode === "teacher" || appMode === "morning-delay";
+    if (!currentUser && !isDirectPortal) {
       setGrades([]);
       setClasses([]);
       setTeachers([]);
       setStudents([]);
       setSchoolName("");
+      setLoading(false);
       return;
     }
 
@@ -377,8 +362,8 @@ export default function App() {
 
     // Check cached school name for instantaneous presentation during loading
     const cachedName = localStorage.getItem("school_name_cached") || 
-      (currentUser.uid ? localStorage.getItem(`school_name_${currentUser.uid}`) : null) || 
-      (currentUser.email ? localStorage.getItem(`school_name_${currentUser.email.toLowerCase()}`) : null);
+      (currentUser?.uid ? localStorage.getItem(`school_name_${currentUser.uid}`) : null) || 
+      (currentUser?.email ? localStorage.getItem(`school_name_${currentUser.email.toLowerCase()}`) : null);
     if (cachedName) {
       setSchoolName(cachedName);
     }
@@ -457,6 +442,29 @@ export default function App() {
       if (unsubStudents) (unsubStudents as () => void)();
     };
   }, [currentUser]);
+
+  // Auto-restore First Grade classes if they were deleted or missing
+  useEffect(() => {
+    if (!loading && grades.length > 0) {
+      const firstGrade = grades.find(g => {
+        const norm = (g.name || "").trim().toLowerCase();
+        return norm.includes("اول") || norm.includes("أول") || norm.includes("1");
+      }) || grades[0];
+
+      if (firstGrade) {
+        const firstGradeClasses = classes.filter(c => c.gradeId === firstGrade.id);
+        if (firstGradeClasses.length === 0) {
+          restoreGradeDefaultClasses(firstGrade.id, 6).then(res => {
+            setClasses(prev => {
+              const existingIds = new Set(prev.map(c => c.id));
+              const newItems = res.filter(r => !existingIds.has(r.id));
+              return [...prev, ...newItems];
+            });
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [loading, grades.length, classes.length]);
 
   const handleRefreshData = async () => {
     try {
@@ -608,13 +616,14 @@ export default function App() {
   const handleGoogleLogin = async () => {
     setLoginError(null);
     try {
-      const prevGuestUid = currentUser?.isGuest ? currentUser.uid : null;
+      clearUserSessionState();
       const res = await signInWithPopup(auth, googleProvider);
       const user = res.user;
-      if (user && prevGuestUid && prevGuestUid !== user.uid) {
-        await migrateGuestDataToUser(prevGuestUid, user.uid, user.email || "");
+      if (user) {
+        setCurrentUser(user);
+        setActiveUser(user);
+        await syncAllLocalDataToFirestore();
       }
-      await syncAllLocalDataToFirestore();
       setAppMode("admin");
       setAdminTab("stats");
       localStorage.removeItem("last_admin_tab");
@@ -706,18 +715,6 @@ export default function App() {
       setIsSavingSchoolName(false);
     }
   };
-
-  // Auto start interactive tour for new users on their first visit
-  useEffect(() => {
-    if (currentUser && !loading && schoolName && appMode !== "stats-only" && appMode !== "teacher" && appMode !== "morning-delay") {
-      const key = `tour_completed_${currentUser.email?.toLowerCase()}`;
-      const completed = localStorage.getItem(key);
-      if (!completed) {
-        setIsTourOpen(true);
-        localStorage.setItem(key, "true");
-      }
-    }
-  }, [currentUser, loading, schoolName, appMode]);
 
   // Synchronize app mode with URL routing
   useEffect(() => {
@@ -902,8 +899,8 @@ export default function App() {
     );
   }
 
-  // Google Authentication Gate
-  if (!currentUser) {
+  // Google Authentication Gate (Required only for Admin management, bypassed for direct teacher / delay links)
+  if (!currentUser && !isDirectTeacherLink && !isDirectMorningDelayLink && appMode !== "teacher" && appMode !== "morning-delay") {
     const currentDomain = window.location.hostname;
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100 animate-fadeIn" dir="rtl">
@@ -1031,13 +1028,6 @@ export default function App() {
           icon: <Calendar className="w-4 h-4" />,
           mode: "teacher" as const,
           tab: "attendance" as const
-        },
-        {
-          id: "behavior",
-          label: "الرصد السلوكي للطلاب",
-          icon: <AlertTriangle className="w-4 h-4" />,
-          mode: "teacher" as const,
-          tab: "behavior" as const
         }
       ]
     },
@@ -1047,7 +1037,7 @@ export default function App() {
       items: [
         {
           id: "stats",
-          label: "بوابة متابعة الغياب والسلوك",
+          label: "بوابة متابعة الغياب والنسب",
           icon: <BarChart3 className="w-4 h-4" />,
           mode: "admin" as const,
           tab: "stats" as const
@@ -1416,24 +1406,24 @@ export default function App() {
           {/* User Profile Info / Status */}
           <div className="flex items-center gap-3">
             {/* Avatar */}
-            <div className={`w-10 h-10 rounded-full border ${currentUser?.isGuest ? 'border-amber-500 bg-amber-500 text-amber-950' : 'border-indigo-500 bg-indigo-600 text-white'} flex items-center justify-center font-extrabold text-sm flex-shrink-0 shadow-3xs`}>
-              {currentUser?.isGuest ? <CloudOff className="w-5 h-5" /> : <Cloud className="w-5 h-5" />}
+            <div className={`w-10 h-10 rounded-full border ${(!currentUser || currentUser?.isGuest) ? 'border-amber-500 bg-amber-500 text-amber-950' : 'border-indigo-500 bg-indigo-600 text-white'} flex items-center justify-center font-extrabold text-sm flex-shrink-0 shadow-3xs`}>
+              {(!currentUser || currentUser?.isGuest) ? <CloudOff className="w-5 h-5" /> : <Cloud className="w-5 h-5" />}
             </div>
 
             {/* Text details */}
             <div className="flex-1 min-w-0 text-right pr-0.5">
               <p className="text-xs font-black text-slate-800 tracking-tight truncate">
-                {currentUser?.isGuest ? "إدارة المدرسة (مباشر)" : (currentUser?.displayName || "مدير المدرسة")}
+                {(!currentUser || currentUser?.isGuest) ? "غير مسجل" : (currentUser?.displayName || "مدير المدرسة")}
               </p>
               <p className="text-[10px] text-slate-500 font-bold truncate mt-0.5" dir="ltr">
-                {currentUser?.isGuest ? "غير مرتبط بحساب Google" : (currentUser?.email || "")}
+                {(!currentUser || currentUser?.isGuest) ? "التسجيل شرط لعرض البيانات" : (currentUser?.email || "")}
               </p>
             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="space-y-1.5 pt-1">
-            {currentUser?.isGuest ? (
+            {(!currentUser || currentUser?.isGuest) ? (
               <button
                 type="button"
                 onClick={handleGoogleLogin}
@@ -1451,6 +1441,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={async () => {
+                  clearUserSessionState();
                   localStorage.removeItem("guest_user_session");
                   localStorage.removeItem("last_admin_tab");
                   try {
@@ -1459,6 +1450,13 @@ export default function App() {
                     console.error("Logout Error:", err);
                   }
                   setCurrentUser(null);
+                  setActiveUser(null);
+                  setGrades([]);
+                  setClasses([]);
+                  setTeachers([]);
+                  setStudents([]);
+                  setSchoolName("");
+                  setTodayCounts({ absentCount: 0, behaviorCount: 0 });
                   setAppMode("admin");
                   setAdminTab("stats");
                   window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
@@ -1491,6 +1489,18 @@ export default function App() {
   );
   };
 
+  const onTriggerRefresh = async () => {
+    setIsRefreshingData(true);
+    try {
+      await handleRefreshData();
+    } finally {
+      setTimeout(() => setIsRefreshingData(false), 600);
+    }
+  };
+
+  const hasGradesAndClasses = grades.length > 0 && classes.length > 0;
+  const hasTeachers = teachers.length > 0;
+
   return (
     <div className="min-h-screen flex bg-gradient-to-br from-slate-100 via-blue-50/10 to-slate-200/40 font-sans text-slate-800" dir="rtl">
       
@@ -1504,23 +1514,58 @@ export default function App() {
       {/* 2. MAIN APP SECTION */}
       <div className={`flex-1 min-h-screen flex flex-col bg-gradient-to-b from-blue-50/40 via-slate-50 to-slate-100/60 ${showSidebar ? "md:mr-72" : ""}`}>
         
+        {/* Top Header for Mobile (< 768px) - Exact match to user's native mobile app screenshot */}
+        {showMobileHeader && (
+          <MobileTopHeader
+            schoolName={schoolName}
+            userDisplayName={currentUser?.displayName}
+            userEmail={currentUser?.email}
+            isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
+            onCopyTeacherLink={handleCopyTeacherLink}
+            teacherCopied={teacherCopied}
+            showTeacherLink={appMode === "teacher"}
+            onOpenShareModal={() => setIsShareModalOpen(true)}
+            onRefreshData={onTriggerRefresh}
+            isRefreshing={isRefreshingData}
+            onTogglePreviewOrMenu={() => setIsMobileDrawerOpen(true)}
+          />
+        )}
 
+        {/* Top Header for Desktop (≥ 768px) */}
+        {showHeader && (
+          <DesktopHeader
+            schoolName={schoolName}
+            onEditSchoolName={() => {
+              setSchoolModalInput(schoolName || "");
+              setIsSchoolModalOpen(true);
+            }}
+            isSavingSchoolName={isSavingSchoolName}
+            onRefreshData={onTriggerRefresh}
+            isRefreshing={isRefreshingData}
+            onOpenShareModal={() => setIsShareModalOpen(true)}
+            todayAbsentCount={todayCounts.absentCount}
+            todayBehaviorCount={todayCounts.behaviorCount}
+            currentTime={currentTime}
+            currentUser={currentUser}
+            onGoogleLogin={handleGoogleLogin}
+          />
+        )}
 
         {/* Dynamic Inner Portal Content */}
-        <main className="flex-1 w-full max-w-none px-3 md:px-6 py-4 space-y-4">
-          {/* Guest Cloud Sync Notice Banner */}
-          {currentUser?.isGuest && appMode === "admin" && (
-            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-3.5 px-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 border border-indigo-700/50 animate-in fade-in">
+        <main className="flex-1 w-full max-w-none px-3 md:px-6 py-4 pb-28 md:pb-8 space-y-4">
+          {/* Registration Mandatory Notice Banner */}
+          {!isDirectKiosk && (!currentUser || currentUser?.isGuest) && (
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 border border-indigo-700/50 animate-in fade-in">
               <div className="flex items-center gap-3 text-right w-full sm:w-auto">
-                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 flex-shrink-0">
+                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 flex-shrink-0">
                   <CloudOff className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-black">
-                    البيانات الحالية تعمل بوضع محلي (غير مسجل بحساب Google)
+                  <p className="text-xs sm:text-sm font-black text-white">
+                    🔒 التسجيل بحساب Google إلزامي لعرض وإدارة البيانات
                   </p>
-                  <p className="text-[11px] text-slate-300 font-medium">
-                    لمزامنة وتوحيد البيانات فورياً بين كلاود فلير وقوقل ستوديو والجوال، سجّل الدخول بـ Google أو اربط كود المزامنة.
+                  <p className="text-[11px] text-slate-300 font-medium mt-0.5">
+                    تم إلغاء التخزين المحلي للبيانات لغير المسجلين لحماية الخصوصية. لعرض وإدارة صفوف وفصول وطلاب مدرستك ورصد الغياب والتأخر، سجّل دخولك بحساب Google.
                   </p>
                 </div>
               </div>
@@ -1529,46 +1574,17 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleGoogleLogin}
-                  className="flex-1 sm:flex-initial py-2 px-3.5 bg-white hover:bg-slate-100 text-slate-900 font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  className="w-full sm:w-auto py-2.5 px-5 bg-white hover:bg-slate-100 text-slate-900 font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
                 >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
                       fill="#EA4335"
                       d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
                     />
                   </svg>
-                  <span>تسجيل الدخول بـ Google</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSyncSuccessMsg(null);
-                    setSyncErrorMsg(null);
-                    setIsSyncModalOpen(true);
-                  }}
-                  className="flex-1 sm:flex-initial py-2 px-3 bg-indigo-800/80 hover:bg-indigo-700 text-indigo-100 font-bold text-xs rounded-xl border border-indigo-600/60 flex items-center justify-center gap-1.5 transition cursor-pointer"
-                >
-                  <Key className="w-3.5 h-3.5" />
-                  <span>كود المزامنة</span>
+                  <span>تسجيل الدخول باستخدام Google لعرض البيانات</span>
                 </button>
               </div>
-            </div>
-          )}
-          
-          {/* Mobile Permanent Inline Menu Card (Always visible at the top on phones <768px) */}
-          {showSidebar && (
-            <div className="md:hidden bg-white border border-slate-200/90 rounded-2xl shadow-sm p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <span className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-                  <span>📱</span>
-                  <span>القائمة الرئيسية للنظام</span>
-                </span>
-                <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-bold">
-                  اختر من القائمة لعرض القسم بالأسفل 👇
-                </span>
-              </div>
-              {renderSidebarContent("mobile")}
             </div>
           )}
 
@@ -1593,6 +1609,8 @@ export default function App() {
                 isDirectLink={isDirectMorningDelayLink}
                 globalProgress={globalProgress}
                 setGlobalProgress={setGlobalProgress}
+                isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
+                onRequireGoogleLogin={handleGoogleLogin}
               />
             ) : appMode === "teacher" ? (
               <TeacherPortal 
@@ -1608,6 +1626,8 @@ export default function App() {
                 isDirectTeacherLink={isDirectTeacherLink}
                 globalProgress={globalProgress}
                 setGlobalProgress={setGlobalProgress}
+                isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
+                onRequireGoogleLogin={handleGoogleLogin}
               />
             ) : (
             <AdminPanel 
@@ -1629,13 +1649,15 @@ export default function App() {
               isSavingSchoolName={isSavingSchoolName}
               globalProgress={globalProgress}
               setGlobalProgress={setGlobalProgress}
+              isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
+              onRequireGoogleLogin={handleGoogleLogin}
             />
           )}
           </div>
         </main>
 
         {/* Styled Footer */}
-        <footer className="bg-white border-t border-slate-200/80 py-4 px-6 text-center text-slate-500 text-xs mt-auto flex flex-col items-center justify-center gap-1">
+        <footer className="bg-white border-t border-slate-200/80 py-4 px-6 text-center text-slate-500 text-xs mt-auto flex flex-col items-center justify-center gap-1 hidden md:flex">
           <p className="font-black text-slate-800 text-sm flex items-center justify-center gap-1.5">
             <span>🏫</span>
             <span>منصة <strong className="text-blue-600 font-black">SmartSchool</strong> الرقمية</span>
@@ -1648,6 +1670,141 @@ export default function App() {
           </p>
         </footer>
       </div>
+
+      {/* Mobile Bottom Navigation Bar (< 768px) */}
+      {showMobileBottomNav && (
+        <MobileBottomNav
+          appMode={appMode}
+          adminTab={adminTab}
+          teacherTab={teacherTab}
+          onNavigate={(mode, tab) => {
+            setAppMode(mode);
+            if (mode === "teacher") {
+              setTeacherTab(tab || "attendance");
+            } else if (mode === "admin") {
+              setAdminTab(tab || "stats");
+            }
+          }}
+          onOpenMenu={() => setIsMobileDrawerOpen(true)}
+          todayAbsentCount={todayCounts.absentCount}
+        />
+      )}
+
+      {/* Mobile Slide-Over Drawer */}
+      <MobileDrawer
+        isOpen={isMobileDrawerOpen}
+        onClose={() => setIsMobileDrawerOpen(false)}
+        appMode={appMode}
+        adminTab={adminTab}
+        teacherTab={teacherTab}
+        onNavigate={(mode, tab) => {
+          handleMenuItemClick(mode as any, tab);
+        }}
+        schoolName={schoolName}
+        onSchoolNameChange={handleSchoolNameChange}
+        isSavingSchoolName={isSavingSchoolName}
+        currentUser={currentUser}
+        onGoogleLogin={handleGoogleLogin}
+        onLogout={async () => {
+          clearUserSessionState();
+          localStorage.removeItem("guest_user_session");
+          localStorage.removeItem("last_admin_tab");
+          try {
+            await signOut(auth);
+          } catch (err) {
+            console.error("Logout Error:", err);
+          }
+          setCurrentUser(null);
+          setActiveUser(null);
+          setGrades([]);
+          setClasses([]);
+          setTeachers([]);
+          setStudents([]);
+          setSchoolName("");
+          setTodayCounts({ absentCount: 0, behaviorCount: 0 });
+          setAppMode("admin");
+          setAdminTab("stats");
+          window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
+        }}
+        onCopyTeacherLink={handleCopyTeacherLink}
+        teacherCopied={teacherCopied}
+        onCopyDelayLink={handleCopyMorningDelayLink}
+        delayCopied={morningDelayCopied}
+        onCopyStatsLink={handleCopyStatsLink}
+        statsCopied={copied}
+        hasGradesAndClasses={hasGradesAndClasses}
+        hasTeachers={hasTeachers}
+      />
+
+      {/* Quick Share Links Modal */}
+      <ShareLinksModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        schoolName={schoolName}
+        onCopyTeacherLink={handleCopyTeacherLink}
+        teacherCopied={teacherCopied}
+        onCopyDelayLink={handleCopyMorningDelayLink}
+        delayCopied={morningDelayCopied}
+        onCopyStatsLink={handleCopyStatsLink}
+        statsCopied={copied}
+      />
+
+      {/* School Name Edit Modal */}
+      {isSchoolModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in" dir="rtl">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-sm w-full p-6 text-right space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                <span>🏫</span>
+                <span>تعديل اسم المدرسة</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsSchoolModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700">اسم المدرسة الرسمي:</label>
+              <input
+                type="text"
+                value={schoolModalInput}
+                onChange={(e) => setSchoolModalInput(e.target.value)}
+                placeholder="مثال: مدرسة الأندلس الابتدائية"
+                className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const trimmed = schoolModalInput.trim();
+                  if (trimmed) {
+                    await handleSchoolNameChange(trimmed);
+                  }
+                  setIsSchoolModalOpen(false);
+                }}
+                className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black transition cursor-pointer shadow-3xs flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>حفظ الاسم</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSchoolModalOpen(false)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Persistent Elegant Floating Save Progress Indicator */}
       {isSavingSchoolName && (
@@ -1702,194 +1859,6 @@ export default function App() {
                 <p className="text-[10px] font-bold text-slate-400">
                   يرجى الانتظار حتى اكتمال العملية بنجاح.
                 </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Interactive Onboarding Tour */}
-      {appMode !== "teacher" && appMode !== "stats-only" && (
-        <TourGuide
-          isOpen={isTourOpen}
-          onClose={() => setIsTourOpen(false)}
-          appMode={appMode}
-          setAppMode={setAppMode}
-          setAdminTab={setAdminTab}
-          setTeacherTab={setTeacherTab}
-          setIsSidebarOpen={setIsSidebarOpen}
-        />
-      )}
-
-      {/* Cloud Sync & Cross-Domain Link Modal */}
-      {isSyncModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200" dir="rtl">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-7 max-w-lg w-full text-right space-y-6 shadow-2xl relative my-8">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-3xs flex-shrink-0">
-                  <RefreshCw className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900 leading-tight">
-                    إعدادات المزامنة السحابية والربط
-                  </h3>
-                  <p className="text-xs text-slate-500 font-bold mt-0.5">
-                    توحيد البيانات بين كلاود فلير وقوقل ستوديو والجوال
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSyncModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-full transition cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Status & Messages */}
-            {syncSuccessMsg && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-in fade-in">
-                <Check className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-                <span>{syncSuccessMsg}</span>
-              </div>
-            )}
-
-            {syncErrorMsg && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2.5 animate-in fade-in">
-                <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
-                <span>{syncErrorMsg}</span>
-              </div>
-            )}
-
-            {/* Current School Information Block */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-black text-slate-500 uppercase tracking-wide">
-                  معلومات المدرسة الحالية:
-                </span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  currentUser?.isGuest ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
-                }`}>
-                  {currentUser?.isGuest ? 'وضع محلي غير موثق' : 'حساب موثق ومزامن'}
-                </span>
-              </div>
-
-              <div className="space-y-2 text-xs font-bold text-slate-700">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">اسم المدرسة:</span>
-                  <span className="font-extrabold text-slate-800">{schoolName || "لم يحدد بعد"}</span>
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
-                  <span className="text-slate-400 flex-shrink-0">كود المزامنة (Sync Code):</span>
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <code className="bg-white border border-slate-200 px-2 py-1 rounded-lg text-[11px] font-mono text-indigo-700 select-all truncate">
-                      {currentUser?.uid || "school_default"}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => handleCopySchoolCode(currentUser?.uid || "school_default")}
-                      className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-700 flex items-center gap-1 cursor-pointer transition flex-shrink-0 shadow-3xs"
-                    >
-                      {schoolCodeCopied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                      <span>{schoolCodeCopied ? "تم" : "نسخ"}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Direct Admin Sync Link Button */}
-              <div className="pt-2 border-t border-slate-200/60">
-                <button
-                  type="button"
-                  onClick={handleCopyAdminSyncLink}
-                  className="w-full py-2 px-3 bg-white hover:bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 flex items-center justify-between cursor-pointer transition shadow-3xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <Link2 className="w-4 h-4 text-indigo-600" />
-                    <span>نسخ رابط لوحة التحكم المباشر مع معرّف المزامنة</span>
-                  </div>
-                  {adminSyncCopied ? (
-                    <span className="text-[10px] text-emerald-600 font-extrabold flex items-center gap-0.5">
-                      <Check className="w-3 h-3" /> تم النسخ
-                    </span>
-                  ) : (
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Method 1: Google Login (Fastest & Best) */}
-            <div className="space-y-2.5">
-              <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>الخيار الأول (الموصى به): تسجيل الدخول بحساب Google</span>
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                سجّل الدخول بنفس حساب Google في كلوفلاير وفي قوقل ستوديو. سيتم ربط كافة البيانات تلقائياً، وتصبح متطابقة في كل مكان.
-              </p>
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold py-3 px-4 rounded-2xl flex items-center justify-center gap-3 text-xs shadow-md transition cursor-pointer"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path
-                    fill="#EA4335"
-                    d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
-                  />
-                </svg>
-                <span>{currentUser?.isGuest ? "تسجيل الدخول وربط البيانات السحابية" : "إعادة المزامنة بحساب Google"}</span>
-              </button>
-            </div>
-
-            {/* Divider */}
-            <div className="relative flex items-center justify-center">
-              <div className="border-t border-slate-200 w-full"></div>
-              <span className="bg-white px-3 text-[11px] font-black text-slate-400 absolute">أو</span>
-            </div>
-
-            {/* Method 2: Link by Code / URL */}
-            <div className="space-y-2.5">
-              <div className="flex items-center gap-1.5 text-xs font-black text-slate-800">
-                <Key className="w-4 h-4 text-indigo-600" />
-                <span>الخيار الثاني: ربط برمز مدرسة / كود المزامنة من متصفح آخر</span>
-              </div>
-              <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                إذا قمت بإنشاء الفصول على كلاود فلير (أو جهاز آخر)، انسخ كود المزامنة أو الرابط وألصقه هنا لتحميل الفصول فورياً:
-              </p>
-              
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  value={syncCodeInput}
-                  onChange={(e) => setSyncCodeInput(e.target.value)}
-                  placeholder="ألصق كود المزامنة (مثل: school_xxxx أو الرابط)..."
-                  className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-300 focus:border-indigo-600 focus:bg-white rounded-xl text-right text-slate-800 outline-none transition"
-                />
-                
-                <button
-                  type="button"
-                  disabled={isLinkingLoading || !syncCodeInput.trim()}
-                  onClick={() => handleLinkSchoolCode(syncCodeInput)}
-                  className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition cursor-pointer"
-                >
-                  {isLinkingLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>جاري المزامنة وتحميل البيانات...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="w-4 h-4" />
-                      <span>مزامنة وتحميل بيانات المدرسة فورياً</span>
-                    </>
-                  )}
-                </button>
               </div>
             </div>
           </div>
